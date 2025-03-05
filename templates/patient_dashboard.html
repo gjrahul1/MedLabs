@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Patient Dashboard - Med Labs</title>
+
+  <!-- Font Awesome for icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+  <link rel="stylesheet" href="/static/styles/patientDashboard.css" />
+
+  <!-- Firebase SDK (Compat Version) -->
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-storage-compat.js"></script>
+  <!-- Your custom scripts -->
+  <script src="/static/scripts/firebaseConfig.js"></script>
+  <script src="/static/scripts/registeration.js"></script>
+  <script src="/static/scripts/dashboard/patientDashboard.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Markdown Parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="title">Med Labs</div>
+    <button class="logout-btn" id="logout-btn">Log out</button>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="toggle active" data-section="home" aria-label="Home">
+      <i class="fas fa-home"></i>
+      <span class="toggle-label">Home</span>
+    </div>
+    <div class="toggle" data-section="prescriptions" aria-label="Prescriptions">
+      <i class="fas fa-prescription-bottle"></i>
+      <span class="toggle-label">Prescriptions</span>
+    </div>
+    <div class="toggle" data-section="lab-records" aria-label="Lab Reports">
+      <i class="fas fa-flask"></i>
+      <span class="toggle-label">Lab Reports</span>
+    </div>
+  </div>
+
+  <!-- Main Content Area -->
+  <div class="main-content">
+    <!-- Patient Info Card -->
+    <div class="info-card" id="patient-info">
+      <div><strong>Patient ID:</strong> <span id="patient-id"></span></div>
+      <div><strong>Next Visit:</strong> <span id="next-visit"></span></div>
+      <div><strong>Consultant:</strong> <span id="consultant-name"></span></div>
+    </div>
+
+    <!-- Bar Chart Section -->
+    <div class="chart-container section active" id="home">
+      <canvas id="visitsChart"></canvas>
+    </div>
+
+    <!-- Prescriptions Section -->
+    <div id="prescriptions" class="section">
+      <!-- <div class="summary-title">Prescriptions</div> -->
+      <div class="content-placeholder" id="prescription-summary">Loading prescriptions...</div>
+    </div>
+
+    <!-- Lab Records Section -->
+    <div id="lab-records" class="section">
+      <!-- <div class="summary-title">Lab Records</div> -->
+      <div class="content-placeholder" id="lab-records-summary">Loading lab records...</div>
+    </div>
+  </div>
+
+  <!-- ChatGPT-like chat box pinned at the bottom -->
+  <div class="chat-input-area">
+    <div class="chat-box">
+      <!-- Attachment Button -->
+      <button class="chat-btn" id="openUpload" title="Attach an image">
+        <i class="fas fa-plus"></i>
+      </button>
+
+      <!-- Hidden File Input -->
+      <input type="file" id="imageUpload" accept="image/*" />
+
+      <!-- Prescription Button -->
+      <button class="chat-btn" id="prescriptionBtn" title="Prescription">
+        <i class="fas fa-prescription-bottle"></i>
+      </button>
+
+      <!-- Lab Record Button -->
+      <button class="chat-btn" id="labRecordBtn" title="Lab Record">
+        <i class="fas fa-flask"></i>
+      </button>
+
+      <!-- Text Input -->
+      <input
+        type="text"
+        id="languageInput"
+        class="chat-text-input"
+        placeholder="Which language should I translate to?"
+      />
+
+      <!-- Send Button -->
+      <button class="chat-btn" id="sendBtn" title="Send">
+        <i class="fas fa-paper-plane"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- Section toggling script with fixed behavior -->
+  <script>
+    document.querySelectorAll('.toggle').forEach(toggle => {
+      toggle.addEventListener('click', () => {
+        document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
+        toggle.classList.add('active');
+
+        const section = toggle.getAttribute('data-section');
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+
+        const targetSection = document.getElementById(section);
+        if (targetSection) {
+          targetSection.classList.add('active');
+        }
+
+        // Sync chat input buttons with sidebar toggles
+        if (section === 'prescriptions') {
+          updateActiveButton(document.getElementById('prescriptionBtn'));
+        } else if (section === 'lab-records') {
+          updateActiveButton(document.getElementById('labRecordBtn'));
+        } else {
+          document.querySelectorAll('.chat-btn').forEach(btn => btn.classList.remove('active'));
+        }
+      });
+    });
+
+    // Ensure active button reflects selection
+    function updateActiveButton(activeBtn) {
+      document.querySelectorAll('.chat-btn').forEach(btn => btn.classList.remove('active'));
+      activeBtn.classList.add('active');
+    }
+
+    document.getElementById('prescriptionBtn').addEventListener('click', () => {
+      updateActiveButton(document.getElementById('prescriptionBtn'));
+      document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
+      document.querySelector('.toggle[data-section="prescriptions"]').classList.add('active');
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.getElementById('prescriptions').classList.add('active');
+    });
+
+    document.getElementById('labRecordBtn').addEventListener('click', () => {
+      updateActiveButton(document.getElementById('labRecordBtn'));
+      document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
+      document.querySelector('.toggle[data-section="lab-records"]').classList.add('active');
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.getElementById('lab-records').classList.add('active');
+    });
+  </script>
+  <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'91a37b4e785b44dd',t:'MTc0MDk0NTY0MC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script>
+  <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'91af52c0af03bf91',t:'MTc0MTA2OTgwOC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script>
+</body>
+</html>

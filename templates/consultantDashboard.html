@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Consultant Dashboard - Med Labs</title>
+  <link rel="stylesheet" href="/static/styles/consultantDashboard.css">
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div class="title">Med Labs</div>
+    <button class="logout-btn" id="logout-btn">Log out</button>
+  </div>
+
+  <!-- Dashboard Container -->
+  <div class="dashboard-container">
+    <!-- Sidebar: Patient List -->
+    <div class="sidebar" id="patient-list">
+      <div class="summary-title">Patient List</div>
+      <select id="patient-dropdown" class="patient-dropdown" onchange="handlePatientSelection(this.value)">
+        <option value="">Select a patient...</option>
+      </select>
+      <div id="patient-details" style="margin-top: 20px; display: none;"></div> <!-- Hidden by default -->
+    </div>
+    
+    <!-- Main Content Area -->
+    <div class="main-content">
+      <!-- Next Patient Section -->
+      <div class="next-patient-section" id="next-patient">
+        <div class="summary-title">Next Patient</div>
+        <div class="content-placeholder">Loading next patient...</div>
+      </div>
+      
+      <!-- Reports Section -->
+      <div class="reports-section">
+        <div class="report-card" id="prescription-summary">
+          <div class="summary-title">Prescription Summary</div>
+          <div class="content-placeholder">Loading prescriptions...</div>
+        </div>
+        <div class="report-card" id="lab-records-summary">
+          <div class="summary-title">Lab Records Summary</div>
+          <div class="content-placeholder">Loading lab records...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full-Screen Patient Details Overlay -->
+  <div id="patient-overlay" class="patient-overlay">
+    <div class="patient-overlay-content">
+      <button class="close-btn" onclick="closePatientOverlay()">×</button>
+      <div id="overlay-patient-details"></div>
+    </div>
+  </div>
+
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-storage-compat.js"></script>
+
+  <!-- Chart.js for Visualization -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Custom Scripts -->
+  <script src="/static/scripts/firebaseConfig.js"></script>
+  <script src="/static/scripts/auth.js"></script>
+  <script src="/static/scripts/utils.js"></script>
+  <!-- Pass the consultant ID from server-side -->
+  <script>
+    window.consultantId = "{{ user_info.uid }}";
+    console.log("Consultant ID set to:", window.consultantId);
+  </script>
+  <script src="/static/scripts/dashboard/consultantDashboard.js"></script>
+  <script src="/static/scripts/storage.js"></script>
+  <!-- Cloudflare script (unchanged) -->
+  <script>
+    (function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'91a8c2670c03bfe5',t:'MTc0MTAwMDk4MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();
+  </script>
+  <script>
+    (function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'91b7e4210d85bcf5',t:'MTc0MTE1OTY0OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();
+  </script>
+</body>
+</html>

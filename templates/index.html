@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MedLabs - Medical Lab Management</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/index.css') }}" />
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav nav--left js-nav">
+        <ul>
+            <li><a href="#about-us"><span>About Us</span></a></li>
+            <li><a href="#" class="is-active"><span>Home</span></a></li>
+        </ul>
+    </nav>
+
+    <!-- Right Navigation -->
+    <nav class="nav nav--right">
+        <ul>
+            <li><a href="https://twitter.com" target="_blank"><span>Contact</span></a></li>
+            <li><a href="/login"><span>Login</span></a></li>
+        </ul>
+    </nav>
+
+    <!-- Three.js Canvas and Overlay -->
+    <div id="canvas-container"></div>
+    <div class="overlay">
+        <h1 class="magic-text">MedLabs</h1>
+        <p class="magic-text subtitle">Automating Patient Care with Precision</p>
+        <button class="cta" id="get-started" onclick="window.location.href='/login'">Get Started</button>
+     </div>
+
+    <!-- About Us Section -->
+    <section id="about-us" class="about-us">
+        <h2>About Us</h2>
+        <div class="team-container">
+            <div class="team-box">
+                <h3>G J Rahul</h3>
+                <p>GEN AI Engineer</p>
+                <a href="https://www.linkedin.com/in/gjrahul/" target="_blank">LinkedIn</a>
+            </div>
+            <div class="team-box">
+                <h3>Rithika R</h3>
+                <p>Developer</p>
+                <a href="https://www.linkedin.com/in/rithika-chettiar-534790255/" target="_blank">LinkedIn</a>
+            </div>
+            <div class="team-box">
+                <h3>Vinit</h3>
+                <p>Developer</p>
+                <a href="#">LinkedIn</a>
+            </div>
+        </div>
+    </section>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="{{ url_for('static', filename='scripts/index.js') }}"></script>
+</body>
+</html>

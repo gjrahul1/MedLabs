@@ -1,0 +1,152 @@
+/* Main Layout */
+body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh; /* Allow expansion if content exceeds viewport */
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #fff;
+    color: #000;
+    box-sizing: border-box;
+    overflow-y: auto; /* Allow vertical scrolling */
+}
+
+/* Container */
+.container {
+    display: flex;
+    width: 100%;
+    max-width: 1200px; /* Limit max width */
+    min-height: 100vh; /* Use min-height so that content can exceed viewport */
+}
+
+/* Left and Right Sections */
+.left-section, .right-section {
+    flex: 1;
+    padding: 40px;
+    box-sizing: border-box;
+    overflow-y: auto; /* Enable scrolling */
+}
+
+/* Left Section - Scrollable Form */
+.left-section {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start; /* Align content at the top */
+    position: relative; /* Maintain relative flow */
+}
+
+/* Hide scrollbar but allow scroll */
+.left-section::-webkit-scrollbar, .right-section::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+}
+
+.left-section, .right-section {
+    -ms-overflow-style: none; /* IE/Edge */
+    scrollbar-width: none; /* Firefox */
+}
+
+/* Title - Scrolls with the form */
+h2 {
+    margin-top: 0;
+    margin-bottom: 20px; /* Space below title */
+    text-align: left; /* Align to the left */
+}
+
+/* Toggle Group - Transparent and Scrolls Normally */
+.toggle-group {
+    display: flex;
+    justify-content: flex-start; /* Align to the left */
+    margin-bottom: 20px; /* Space below toggle */
+    width: 75%; /* Adjusted for 3 options */
+    background: transparent; /* Transparent background */
+}
+
+/* Toggle Option Style */
+.toggle-option {
+    flex: 1;
+    padding: 10px;
+    text-align: center;
+    border-radius: 8px;
+    cursor: pointer;
+    margin: 0 5px;
+    transition: background 0.3s ease;
+    background: transparent; /* Transparent background */
+    border: 1px solid transparent; /* Invisible border */
+}
+
+/* Active Toggle Style */
+.toggle-option.active {
+    background: #035096; /* Active state color */
+    color: #fff;
+    border: none; /* Remove border */
+}
+
+/* Hide role-specific sections by default */
+.role-fields {
+  display: none;
+}
+
+/* Right Section */
+.right-section {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+/* Headings */
+h1 {
+    color: #035096;
+    font-size: 3rem;
+    margin-bottom: 10px;
+}
+
+/* Form Inputs and Button */
+label {
+    display: block;
+    margin: 10px 0 5px;
+}
+
+input, button {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: none;
+    border-radius: 8px;
+}
+
+/* Button Styling */
+button {
+    background: #00c6ff;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+button:hover {
+    background: #0072ff;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .container {
+        flex-direction: column; /* Stack vertically on smaller screens */
+        width: 100%;
+        min-height: 100vh; /* Ensure full height */
+    }
+
+    .toggle-group {
+        width: 100%; /* Full width on smaller screens */
+    }
+
+    h1 {
+        font-size: 2.5rem; /* Adjust heading size */
+    }
+
+    .left-section {
+        padding: 20px; /* Ensure consistent padding */
+    }
+}

@@ -1,0 +1,255 @@
+/* General Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #f9f9f9;
+  color: #333;
+}
+
+/* Header */
+.header {
+  background-color: white;
+  color: #035009;
+  padding: 15px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #007bff;
+}
+
+.logout-btn {
+  background-color: transparent;
+  border: 1px solid #007bff;
+  color: #007bff;
+  padding: 8px 15px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.logout-btn:hover {
+  background-color: rgba(0, 123, 255, 0.1);
+}
+
+/* Sidebar */
+.sidebar {
+  position: fixed;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  width: 60px;
+  height: calc(50vh - 60px);
+  background-color: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 20px;
+  transition: width 0.3s ease;
+}
+
+.sidebar:hover {
+  width: 150px;
+}
+
+.toggle {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 15px 0;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.3s;
+  position: relative;
+}
+
+.toggle i {
+  font-size: 20px;
+  color: #007bff;
+}
+
+.toggle.active {
+  background-color: #007bff;
+  color: white;
+  box-shadow: 0 0 10px rgba(0, 123, 255, 0.5);
+}
+
+.toggle.active i {
+  color: white;
+}
+
+.toggle-label {
+  display: none;
+  position: absolute;
+  left: 50px;
+  background-color: #333;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 3px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.sidebar:hover .toggle-label {
+  display: block;
+}
+
+/* Main Content */
+.main-content {
+  margin-left: 60px;
+  padding: 20px;
+  transition: margin-left 0.3s;
+  margin-bottom: 100px; /* Space for chat box */
+}
+
+.sidebar:hover ~ .main-content {
+  margin-left: 150px;
+}
+
+.section {
+  display: none;
+  opacity: 0;
+  transition: opacity 0.3s ease-in-out;
+}
+
+.section.active {
+  display: block;
+  opacity: 1;
+}
+
+/* Info Card */
+.info-card {
+  background-color: white;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  margin-bottom: 30px;
+}
+
+.info-box div {
+  margin: 10px 0;
+  font-size: 16px;
+}
+
+/* Summary Titles */
+.summary-title {
+  font-size: 20px;
+  font-weight: 500;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+/* Content Placeholder */
+.content-placeholder {
+  background-color: white;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  text-align: center;
+}
+
+/* Chart Container */
+.chart-container {
+  background-color: white;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+
+/* Summary Container */
+.summary-container {
+  background: #fff;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  font-family: 'Courier New', monospace;
+  white-space: pre-wrap; /* Preserve line breaks */
+}
+
+.summary-heading {
+  margin-bottom: 5px;
+}
+
+.summary-heading strong {
+  font-weight: bold;
+  display: block;
+  text-align: left;
+}
+
+.summary-text {
+  margin-left: 10px; /* Indent content under headings */
+  text-align: left;
+}
+
+/* Chat Box Pinned at Bottom */
+.chat-input-area {
+  position: fixed;
+  bottom: 0;
+  left: 60px;
+  right: 0;
+  background-color: #fff;
+  border-top: 1px solid #ccc;
+  padding: 10px 20px;
+  box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
+  display: flex;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.chat-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 800px;
+  width: 100%;
+}
+
+
+.chat-btn {
+  background-color: #f2f2f2;
+  border: none;
+  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  transition: background-color 0.3s;
+}
+
+.chat-btn:hover {
+  background-color: #e0e0e0;
+}
+
+.chat-text-input {
+  flex: 1;
+  padding: 10px;
+  border-radius: 20px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.3s;
+}
+
+.chat-text-input:focus {
+  border-color: #1a73e8;
+}
+
+/* Hide file input */
+#imageUpload {
+  display: none;
+}

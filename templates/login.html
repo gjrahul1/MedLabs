@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Med Labs - Login</title>
+  <link rel="stylesheet" href="/static/styles/login.css" />
+
+  <!-- Firebase (Compat Version) -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+
+  <!-- Your Firebase config -->
+  <script src="/static/scripts/firebaseConfig.js"></script>
+  <script src="/static/scripts/login.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="left-section">
+      <div class="login-container">
+        <h2>Med Labs Login</h2>
+        <form id="login-form">
+          <!-- Role Toggle Buttons -->
+          <div class="form-group">
+            <label>Select Role:</label>
+            <div class="toggle-container">
+              <button type="button" class="toggle-option active" data-role="patient" onclick="showFields('patient')">Patient</button>
+              <button type="button" class="toggle-option" data-role="doctor" onclick="showFields('doctor')">Doctor</button>
+              <button type="button" class="toggle-option" data-role="assistant" onclick="showFields('assistant')">Assistant</button>
+            </div>
+            <input type="hidden" id="role" name="role" value="patient">
+          </div>
+
+          <!-- Patient Login Fields -->
+          <div id="patient-fields" class="role-fields">
+            <div class="form-group">
+              <label for="email">Email:</label>
+              <input type="email" id="email" name="email" placeholder="Enter your email">
+            </div>
+            <div class="form-group">
+              <label for="password">Password:</label>
+              <input type="password" id="password" name="password" placeholder="Enter your password">
+            </div>
+          </div>
+
+          <!-- Doctor Login Fields -->
+          <div id="doctor-fields" class="role-fields" style="display: none;">
+            <div class="form-group">
+              <label for="doctor_id">Doctor Email:</label>
+              <input type="email" id="doctor_id" name="doctor_id" placeholder="Enter your doctor email">
+            </div>
+            <div class="form-group">
+              <label for="doctor_password">Password:</label>
+              <input type="password" id="doctor_password" name="doctor_password" placeholder="Enter your password">
+            </div>
+          </div>
+
+          <!-- Assistant Login Fields -->
+          <div id="assistant-fields" class="role-fields" style="display: none;">
+            <div class="form-group">
+              <label for="lab_id">Assistant Email:</label>
+              <input type="email" id="lab_id" name="lab_id" placeholder="Enter your assistant email">
+            </div>
+            <div class="form-group">
+              <label for="lab_password">Password:</label>
+              <input type="password" id="lab_password" name="lab_password" placeholder="Enter your password">
+            </div>
+          </div>
+
+          <button type="submit">Login</button>
+        </form>
+        <div class="register-section">
+          <p>Don't have an account? <a href="/register">Register</a></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="right-section">
+      <h1>Med Labs</h1>
+      <p><strong>Every life matters ❤️</strong></p>
+    </div>
+  </div>
+
+  <!-- Remove the Cloudflare script injection for simplicity -->
+</body>
+</html>
