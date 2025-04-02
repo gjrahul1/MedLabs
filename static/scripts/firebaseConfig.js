@@ -8,7 +8,7 @@ if (!window.firebase) {
 }
 
 var firebaseConfig = {
-  apiKey: "AIzaSyAZ9_AM_0ynRQbuQ7p77Mh9FqBjcZFe_-A",
+  apiKey: "API-KEY",
   authDomain: "med-labs-42f13.firebaseapp.com",
   projectId: "med-labs-42f13",
   storageBucket: "med-labs-42f13",
