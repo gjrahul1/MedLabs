@@ -86,3 +86,6 @@ firestore-debug.log
 
 #firebase-config
 static/scripts/firebaseConfig.js
+
+#MP3
+*.mp3
