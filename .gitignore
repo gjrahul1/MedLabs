@@ -56,6 +56,7 @@ node_modules/
 # Optional eslint cache
 .eslintcache
 
+
 # Optional REPL history
 .node_repl_history
 
@@ -82,3 +83,6 @@ example.html
 
 #Firebase Log
 firestore-debug.log
+
+#firebase-config
+static/scripts/firebaseConfig.js
