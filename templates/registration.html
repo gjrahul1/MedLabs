@@ -5,19 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Registration Page</title>
   <link rel="stylesheet" href="/static/styles/registeration.css" />
-  
-  <!-- Firebase SDK (Compat Version) -->
+
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
-  
-  <!-- Firebase Config (Compat Version) -->
+
   <script src="/static/scripts/firebaseConfig.js"></script>
-  
-  <!-- Main Logic (ensure to use defer so the DOM is loaded first) -->
+
   <script src="/static/scripts/registeration.js" defer></script>
-  
+
   <style>
     /* Ensure that by default all role-fields are hidden except the initial one */
     .role-fields {
@@ -49,59 +46,52 @@
         <span class="toggle-option" id="toggle-assistant" data-role="assistant">Assistant</span>
       </div>
       <form id="registration-form">
-        <!-- Patient Fields -->
         <div id="patient-fields" class="role-fields active">
           <label for="email_patient">Email</label>
-          <input type="email" id="email_patient" name="email_patient" placeholder="email" required>
+          <input type="email" id="email_patient" name="email" placeholder="email" required>
           <label for="password_patient">Password</label>
-          <input type="password" id="password_patient" name="password_patient" placeholder="password" required>
+          <input type="password" id="password_patient" name="password" placeholder="password" required>
           <label for="phone_patient">Phone Number</label>
-          <input type="tel" id="phone_patient" name="phone_patient" placeholder="phone number" required>
+          <input type="tel" id="phone_patient" name="phone" placeholder="phone number" required>
           <label for="full_name_patient">Full Name</label>
-          <input type="text" id="full_name_patient" name="full_name_patient" placeholder="name" required>
+          <input type="text" id="full_name_patient" name="full_name" placeholder="name" required>
           <label for="age_patient">Age</label>
-          <input type="number" id="age_patient" name="age_patient" placeholder="age" required>
+          <input type="number" id="age_patient" name="age" placeholder="age" required>
           <label for="dob_patient">Date of Birth (DD-MM-YYYY)</label>
-          <input type="text" id="dob_patient" name="dob_patient" placeholder="date of birth" required>
-          <label for="consultant_id_patient">Consultant ID</label>
-          <input type="text" id="consultant_id_patient" name="consultant_id_patient" placeholder="consultant id">
+          <input type="text" id="dob_patient" name="dob" placeholder="date of birth" required>
           <label for="location_patient">Location</label>
-          <input type="text" id="location_patient" name="location_patient" placeholder="location" required>
-          <input type="hidden" id="role" name="role" value="patient">
+          <input type="text" id="location_patient" name="location" placeholder="location" required>
         </div>
 
-        <!-- Doctor Fields -->
         <div id="doctor-fields" class="role-fields">
           <label for="email_doctor">Email</label>
-          <input type="email" id="email_doctor" name="email_doctor" placeholder="email" required>
+          <input type="email" id="email_doctor" name="email" placeholder="email" required>
           <label for="password_doctor">Password</label>
-          <input type="password" id="password_doctor" name="password_doctor" placeholder="password" required>
+          <input type="password" id="password_doctor" name="password" placeholder="password" required>
           <label for="phone_doctor">Phone Number</label>
-          <input type="tel" id="phone_doctor" name="phone_doctor" placeholder="phone number" required>
+          <input type="tel" id="phone_doctor" name="phone" placeholder="phone number" required>
           <label for="full_name_doctor">Full Name</label>
-          <input type="text" id="full_name_doctor" name="full_name_doctor" placeholder="name" required>
+          <input type="text" id="full_name_doctor" name="full_name" placeholder="name" required>
           <label for="specialty_doctor">Specialty</label>
-          <input type="text" id="specialty_doctor" name="specialty_doctor" placeholder="specialty" required>
-          <input type="hidden" id="role" name="role" value="doctor">
+          <input type="text" id="specialty_doctor" name="specialty" placeholder="specialty" required>
         </div>
 
-        <!-- Assistant Fields -->
         <div id="assistant-fields" class="role-fields">
           <label for="email_assistant">Email</label>
-          <input type="email" id="email_assistant" name="email_assistant" placeholder="email" required>
+          <input type="email" id="email_assistant" name="email" placeholder="email" required>
           <label for="password_assistant">Password</label>
-          <input type="password" id="password_assistant" name="password_assistant" placeholder="password" required>
+          <input type="password" id="password_assistant" name="password" placeholder="password" required>
           <label for="phone_assistant">Phone Number</label>
-          <input type="tel" id="phone_assistant" name="phone_assistant" placeholder="phone number" required>
+          <input type="tel" id="phone_assistant" name="phone" placeholder="phone number" required>
           <label for="full_name_assistant">Full Name</label>
-          <input type="text" id="full_name_assistant" name="full_name_assistant" placeholder="name" required>
+          <input type="text" id="full_name_assistant" name="full_name" placeholder="name" required>
           <label for="department_assistant">Department</label>
-          <input type="text" id="department_assistant" name="department_assistant" placeholder="department" required>
+          <input type="text" id="department_assistant" name="department" placeholder="department" required>
           <label for="assigned_doctors_assistant">Assigned Doctors (Comma-separated)</label>
-          <input type="text" id="assigned_doctors_assistant" name="assigned_doctors_assistant" placeholder="assigned doctors" required>
-          <input type="hidden" id="role" name="role" value="assistant">
+          <input type="text" id="assigned_doctors_assistant" name="assigned_doctors" placeholder="assigned doctors" required>
         </div>
 
+        <input type="hidden" id="role" name="role" value="patient">
         <button type="submit">Register</button>
       </form>
     </div>
@@ -111,5 +101,5 @@
       <p>Sign up to manage your healthcare needs efficiently.</p>
     </div>
   </div>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9322693658dcbd00',t:'MTc0NDk2MDk0NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9323a1400e6953af',t:'MTc0NDk3MzcyNi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>

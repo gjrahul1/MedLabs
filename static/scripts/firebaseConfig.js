@@ -1,4 +1,4 @@
-// firebaseConfig.js (Compat Version)
+// firebaseConfig.js (Compat Version, updated for Firebase 11.3.1)
 
 // Check that the global firebase object exists
 if (!window.firebase) {
@@ -22,7 +22,7 @@ try {
   firebase.initializeApp(firebaseConfig);
   window.auth = firebase.auth();
   window.db = firebase.firestore();
-  window.storage = firebase.storage(); // Ensure storage is initialized
+  window.storage = firebase.storage(); // Initialize Firebase Storage
   console.log("✅ Firebase initialized successfully!");
 } catch (err) {
   console.error("Firebase initialization error:", err);

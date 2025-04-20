@@ -7,7 +7,7 @@ def extract_text_from_image(local_image_path):
     Returns the extracted text as a string.
     """
     # Path to your Google Cloud service account JSON key file
-    creds_path = './Cred/Google Vision/academic-pipe-452122-q0-89e19495722a.json'  
+    creds_path = "./Cred/Med_Labs_GC/med-labs-42f13-b311d40cb690.json"  
     credentials = service_account.Credentials.from_service_account_file(creds_path)
 
     # Initialize the Vision client with explicit credentials

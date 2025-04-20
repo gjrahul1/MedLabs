@@ -13,7 +13,7 @@ async function getFreshToken() {
   try {
     const idToken = await user.getIdToken(true); // Force refresh
     sessionStorage.setItem('idToken', idToken);
-    console.log('Refreshed ID Token:', idToken);
+    console.log('Refreshed ID Token:', idToken.substring(0, 20) + '...');
     return idToken;
   } catch (error) {
     console.error("Error refreshing token:", error);
@@ -27,24 +27,42 @@ async function loadDashboardData() {
   const idToken = await getFreshToken();
   if (!idToken) return;
 
-  const response = await fetch('/dashboard', {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${idToken}`,
-      'Content-Type': 'application/json'
+  try {
+    const response = await fetch('/dashboard', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${idToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      console.error('Dashboard access failed:', response.status, await response.text());
+      window.location.href = '/login';
+      return;
     }
-  });
 
-  if (!response.ok) {
-    console.error('Dashboard access failed:', response.status);
+    const data = await response.text(); // Expect HTML content
+    document.body.innerHTML = data; // Render the dashboard HTML
+    console.log('Dashboard loaded successfully');
+    // Initialize patientDashboard.js or other scripts if needed
+    const script = document.createElement('script');
+    script.src = '/static/scripts/js/patientDashboard.js';
+    document.body.appendChild(script);
+  } catch (error) {
+    console.error('Error loading dashboard:', error);
     window.location.href = '/login';
-    return;
   }
-
-  const data = await response.json();
-  console.log('Dashboard data loaded:', data);
-  // Render dashboard content here
 }
 
 // Load dashboard when the page loads
-window.onload = loadDashboardData;
+window.onload = () => {
+  auth.onAuthStateChanged((user) => {
+    if (user) {
+      loadDashboardData();
+    } else {
+      console.log("No user authenticated, redirecting to login");
+      window.location.href = '/login';
+    }
+  });
+};

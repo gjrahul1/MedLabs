@@ -1,0 +1,158 @@
+/* Reset and Base Styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #f0f2f5;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Container */
+.container {
+  position: relative;
+  width: 100%;
+  max-width: 1200px;
+  height: 80vh;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+}
+
+/* Voice Circle (Siri-like) */
+.voice-circle {
+  width: 200px;
+  height: 200px;
+  background: linear-gradient(135deg, #007aff, #34c759);
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  font-size: 1.5rem;
+  box-shadow: 0 0 20px rgba(0, 122, 255, 0.3);
+  transition: transform 0.1s ease-in-out, opacity 0.2s;
+  cursor: pointer;
+  position: absolute;
+  left: 20%;
+  transform: translateX(-10%);
+}
+
+.voice-circle.vibrating {
+  animation: vibrate 0.1s infinite alternate;
+  opacity: 0.9;
+}
+
+@keyframes vibrate {
+  0% { transform: translate(-10%, -2px) scale(1.05); }
+  100% { transform: translate(-10%, 2px) scale(0.95); }
+}
+
+/* Start/Stop Button */
+.control-button {
+  position: absolute;
+  bottom: 20px;
+  left: 20%;
+  transform: translateX(-10%);
+  padding: 10px 20px;
+  font-size: 1rem;
+  font-weight: bold;
+  color: white;
+  background: #007aff;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  transition: background 0.2s;
+}
+
+.control-button:hover {
+  background: #005bb5;
+}
+
+.control-button.stop {
+  background: #ff3b30;
+}
+
+.control-button.stop:hover {
+  background: #cc2e26;
+}
+
+/* Transcript Panel */
+.transcript-panel {
+  width: 40%;
+  height: 80%;
+  background: rgba(255, 255, 255, 0.65);
+  border-radius: 15px;
+  padding: 20px;
+  position: absolute;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.transcript-panel h3 {
+  font-size: 1.2rem;
+  margin-bottom: 10px;
+  color: #333;
+}
+
+.transcript-content {
+  flex-grow: 1;
+  overflow-y: auto;
+  font-size: 0.9rem;
+  color: #444;
+  padding: 10px;
+  line-height: 1.5;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(4, auto);
+  gap: 5px;
+}
+
+.transcript-content p {
+  margin: 5px 0;
+  padding: 5px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 5px;
+}
+
+.transcript-content .user {
+  text-align: right;
+  background: rgba(0, 122, 255, 0.2);
+}
+
+.transcript-content .ai {
+  text-align: left;
+  background: rgba(52, 199, 89, 0.2);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .voice-circle {
+      width: 150px;
+      height: 150px;
+      left: 10%;
+      transform: translateX(-5%);
+  }
+  .control-button {
+      left: 10%;
+      transform: translateX(-5%);
+      padding: 8px 16px;
+      font-size: 0.9rem;
+  }
+  .transcript-panel {
+      width: 60%;
+      height: 60%;
+      right: 10px;
+  }
+}

@@ -7,7 +7,7 @@
 
   function getGreeting() {
     const hour = new Date().getHours();
-    return hour < 12 ? "Good Morning!" : hour < 18 ? "Good Afternoon!" : "Good Evening!";
+    return hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
   }
 
   async function getAuthToken() {
@@ -18,7 +18,7 @@
     }
     try {
       const token = await user.getIdToken(true);
-      console.log("Retrieved auth token");
+      console.log("Retrieved auth token:", token);
       return token;
     } catch (error) {
       console.error("Error getting auth token:", error);
@@ -49,24 +49,135 @@
         return;
       }
       const patientData = patientSnap.data();
-      console.log("Patient data:", patientData);
-      document.getElementById("patient-id").textContent = uid;
-      document.getElementById("next-visit").textContent = patientData.next_visit || "Not scheduled";
-      document.getElementById("consultant-name").textContent = patientData.consultant_id
+      console.log("Patient data fetched from Firestore:", patientData);
+
+      const patientIdElement = document.getElementById("patient-id");
+      const nextVisitElement = document.getElementById("next-visit");
+      const consultantNameElement = document.getElementById("consultant-name");
+      const headerTitle = document.querySelector(".dashboard-header h1");
+
+      if (!patientIdElement || !nextVisitElement || !consultantNameElement || !headerTitle) {
+        console.error("DOM elements missing:", {
+          patientIdElement: !!patientIdElement,
+          nextVisitElement: !!nextVisitElement,
+          consultantNameElement: !!consultantNameElement,
+          headerTitle: !!headerTitle
+        });
+        return;
+      }
+
+      patientIdElement.textContent = uid || "N/A";
+      nextVisitElement.textContent = patientData.next_visit ? new Date(patientData.next_visit.seconds * 1000).toLocaleDateString() : "Not scheduled";
+      consultantNameElement.textContent = patientData.consultant_id
         ? await db.doc(`consultant_registrations/${patientData.consultant_id}`).get()
-            .then(snap => snap.exists ? snap.data().full_name : "Unknown Consultant")
-            .catch(() => "Unknown Consultant")
-        : "Not assigned";
+            .then(snap => {
+              if (snap.exists) {
+                const consultantName = snap.data().full_name;
+                console.log("Consultant name fetched:", consultantName);
+                return consultantName;
+              } else {
+                console.warn(`No consultant found for ID: ${patientData.consultant_id}`);
+                return "No Consultant Assigned";
+              }
+            })
+            .catch(error => {
+              console.error("Error fetching consultant name:", error);
+              return "No Consultant Assigned";
+            })
+        : "No Consultant Assigned";
+
+      // Update header with greeting and patient name
+      headerTitle.textContent = `${getGreeting()}, ${patientData.full_name || 'Patient'}!`;
+
+      // Show notification if no consultant is assigned
+      if (!patientData.consultant_id) {
+        document.getElementById("doctor-notification").style.display = "block";
+      }
     } catch (error) {
       console.error("Error loading patient data:", error);
     }
   }
 
-  async function loadPrescriptions(uid) {
-    const container = document.getElementById("prescription-summary");
-    if (!container) return;
+  async function loadInitialScreening(uid) {
+    const container = document.querySelector("#home .screening-container");
+    if (!container) {
+      console.error("Screening container not found");
+      return;
+    }
 
-    container.innerHTML = "<div class='summary-title' style='font-size: 1.5em; margin-bottom: 15px; text-align: left; border-bottom: 2px solid #007bff; padding-bottom: 5px; color: #007bff;'>Prescriptions</div>";
+    container.innerHTML = `
+      <h2 class="section-title">Initial Screening Details</h2>
+      <div class="content-placeholder">Loading initial screening details...</div>
+    `;
+
+    try {
+      const screeningDoc = await db.collection("initial_screenings").doc(`initial_screening_${uid}`).get();
+      if (!screeningDoc.exists) {
+        container.innerHTML = `
+          <h2 class="section-title">Initial Screening Details</h2>
+          <p class="no-data">No initial screening data available.</p>
+        `;
+        return;
+      }
+
+      const data = screeningDoc.data();
+      const screeningHTML = `
+        <h2 class="section-title">Initial Screening Details</h2>
+        <div class="screening-cards">
+          <div class="screening-card">
+            <div class="card-header"><i class="fas fa-heartbeat card-icon"></i> Symptoms</div>
+            <div class="card-content">${data.symptoms || 'N/A'}</div>
+          </div>
+          <div class="screening-card">
+            <div class="card-header"><i class="fas fa-exclamation-triangle card-icon"></i> Severity</div>
+            <div class="card-content">
+              <span class="severity-badge ${data.severity ? data.severity.toLowerCase() : 'unknown'}">
+                ${data.severity || 'Unknown'}
+              </span>
+            </div>
+          </div>
+          <div class="screening-card">
+            <div class="card-header"><i class="fas fa-clock card-icon"></i> Duration</div>
+            <div class="card-content">${data.duration || 'N/A'}</div>
+          </div>
+          <div class="screening-card">
+            <div class="card-header"><i class="fas fa-bolt card-icon"></i> Triggers</div>
+            <div class="card-content">${data.triggers || 'N/A'}</div>
+          </div>
+          <div class="screening-card full-width">
+            <div class="card-header"><i class="fas fa-calendar-alt card-icon"></i> Date</div>
+            <div class="card-content">${new Date(data.timestamp?.seconds * 1000).toLocaleDateString()}</div>
+          </div>
+        </div>
+      `;
+
+      container.innerHTML = screeningHTML;
+
+      // Add fade-in animation to screening cards
+      container.querySelectorAll('.screening-card').forEach((card, index) => {
+        card.style.animation = `fadeIn 0.5s ease-in-out ${index * 0.1}s forwards`;
+      });
+    } catch (error) {
+      console.error("Error loading initial screening:", error);
+      container.innerHTML = `
+        <h2 class="section-title">Initial Screening Details</h2>
+        <p class="error">Failed to load initial screening data.</p>
+      `;
+    }
+  }
+
+  async function loadPrescriptions(uid) {
+    const container = document.getElementById("prescriptions");
+    if (!container) {
+      console.error("Prescriptions section container not found");
+      return;
+    }
+
+    container.innerHTML = `
+      <h2 class="section-title">Prescriptions</h2>
+      <div class="content-placeholder">Loading prescriptions...</div>
+    `;
+
     try {
       const querySnapshot = await db.collection('prescriptions')
         .where('uid', '==', uid)
@@ -74,11 +185,18 @@
         .get();
 
       if (querySnapshot.empty) {
-        container.innerHTML += "<p>No prescriptions found.</p>";
+        container.innerHTML = `
+          <h2 class="section-title">Prescriptions</h2>
+          <p class="no-data">No prescriptions found.</p>
+        `;
         return;
       }
 
-      container.innerHTML += "<div class='report-container' style='margin-top: 20px;'>";
+      let prescriptionsHTML = `
+        <h2 class="section-title">Prescriptions</h2>
+        <div class="report-container">
+      `;
+      let index = 0;
       for (const doc of querySnapshot.docs) {
         const data = doc.data();
         const consultantName = data.consultant_id
@@ -88,46 +206,58 @@
           : "Not assigned";
 
         const metadata = `
-          <div style="margin-bottom: 15px; text-align: left; font-family: 'Times New Roman', serif; color: #444;">
-            <p style="margin-bottom: 10px;"><strong>Patient Name:</strong> ${data.patient_name || 'Unknown'}</p>
-            <p style="margin-bottom: 10px;"><strong>Date:</strong> ${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}</p>
-            <p><strong>Consultant:</strong> ${consultantName}</p>
-          </div>
-        `;
-
-        const summaryLines = (data.summary || 'No summary available').split('\n')
-          .filter(line => line.trim())
-          .map(line => {
-            line = line.replace(/\*+/g, '').trim();
-            if (line.startsWith('**') && line.includes(':**')) {
-              const heading = line.replace(/^(\*\*[^:]+:\*\*)/, '$1').replace(/\*\*/g, '');
-              return `<div class="summary-heading" style="margin-bottom: 8px;"><strong>${heading}</strong></div>`;
-            }
-            return `<div class="summary-text" style="margin-bottom: 8px;">${line}</div>`;
-          })
-          .join('');
-
-        container.innerHTML += `
-          <div class="report-section" style="border: 1px solid #ccc; padding: 20px; margin-bottom: 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); background: #fff; text-align: left; transition: transform 0.3s;">
-            ${metadata}
-            <div class="summary-container" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 15px; line-height: 1.8; font-family: 'Courier New', monospace; color: #333;">
-              ${summaryLines}
+          <div class="metadata">
+            <div class="metadata-item">
+              <span class="label">Patient Name:</span>
+              <span class="value">${data.patient_name || 'Unknown'}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="label">Date:</span>
+              <span class="value">${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="label">Consultant:</span>
+              <span class="value">${consultantName}</span>
             </div>
           </div>
         `;
+
+        // Parse markdown summary using marked library
+        const regionalSummaryHTML = marked.parse(data.summary || 'No summary available');
+        const professionalSummaryHTML = marked.parse(data.professional_summary || 'No professional summary available');
+
+        prescriptionsHTML += `
+          <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
+            ${metadata}
+            <div class="summary-container regional-summary">${regionalSummaryHTML}</div>
+            <div class="summary-container professional-summary" style="display: none;">${professionalSummaryHTML}</div>
+          </div>
+        `;
+        index++;
       }
-      container.innerHTML += "</div>";
+      prescriptionsHTML += "</div>";
+      container.innerHTML = prescriptionsHTML;
     } catch (error) {
       console.error("Error loading prescriptions:", error);
-      container.innerHTML += "<p>Failed to load prescriptions.</p>";
+      container.innerHTML = `
+        <h2 class="section-title">Prescriptions</h2>
+        <p class="error">Failed to load prescriptions.</p>
+      `;
     }
   }
 
   async function loadLabRecords(uid) {
-    const container = document.getElementById("lab-records-summary");
-    if (!container) return;
+    const container = document.getElementById("lab-records");
+    if (!container) {
+      console.error("Lab records section container not found");
+      return;
+    }
 
-    container.innerHTML = "<div class='summary-title' style='font-size: 1.5em; margin-bottom: 15px; text-align: left; border-bottom: 2px solid #007bff; padding-bottom: 5px; color: #007bff;'>Lab Records</div>";
+    container.innerHTML = `
+      <h2 class="section-title">Lab Reports</h2>
+      <div class="content-placeholder">Loading lab records...</div>
+    `;
+
     try {
       const querySnapshot = await db.collection('lab_records')
         .where('uid', '==', uid)
@@ -135,11 +265,18 @@
         .get();
 
       if (querySnapshot.empty) {
-        container.innerHTML += "<p>No lab records found.</p>";
+        container.innerHTML = `
+          <h2 class="section-title">Lab Reports</h2>
+          <p class="no-data">No lab records found.</p>
+        `;
         return;
       }
 
-      container.innerHTML += "<div class='report-container' style='margin-top: 20px;'>";
+      let labRecordsHTML = `
+        <h2 class="section-title">Lab Reports</h2>
+        <div class="report-container">
+      `;
+      let index = 0;
       for (const doc of querySnapshot.docs) {
         const data = doc.data();
         const consultantName = data.consultant_id
@@ -149,38 +286,43 @@
           : "Not assigned";
 
         const metadata = `
-          <div style="margin-bottom: 15px; text-align: left; font-family: 'Times New Roman', serif; color: #444;">
-            <p style="margin-bottom: 10px;"><strong>Patient Name:</strong> ${data.patient_name || 'Unknown'}</p>
-            <p style="margin-bottom: 10px;"><strong>Date:</strong> ${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}</p>
-            <p><strong>Consultant:</strong> ${consultantName}</p>
-          </div>
-        `;
-
-        const summaryLines = (data.summary || 'No summary available').split('\n')
-          .filter(line => line.trim())
-          .map(line => {
-            line = line.replace(/\*+/g, '').trim();
-            if (line.startsWith('**') && line.includes(':**')) {
-              const heading = line.replace(/^(\*\*[^:]+:\*\*)/, '$1').replace(/\*\*/g, '');
-              return `<div class="summary-heading" style="margin-bottom: 8px;"><strong>${heading}</strong></div>`;
-            }
-            return `<div class="summary-text" style="margin-bottom: 8px;">${line}</div>`;
-          })
-          .join('');
-
-        container.innerHTML += `
-          <div class="report-section" style="border: 1px solid #ccc; padding: 20px; margin-bottom: 20px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); background: #fff; text-align: left; transition: transform 0.3s;">
-            ${metadata}
-            <div class="summary-container" style="background: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 15px; line-height: 1.8; font-family: 'Courier New', monospace; color: #333;">
-              ${summaryLines}
+          <div class="metadata">
+            <div class="metadata-item">
+              <span class="label">Patient Name:</span>
+              <span class="value">${data.patient_name || 'Unknown'}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="label">Date:</span>
+              <span class="value">${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}</span>
+            </div>
+            <div class="metadata-item">
+              <span class="label">Consultant:</span>
+              <span class="value">${consultantName}</span>
             </div>
           </div>
         `;
+
+        // Parse markdown summary using marked library
+        const regionalSummaryHTML = marked.parse(data.summary || 'No summary available');
+        const professionalSummaryHTML = marked.parse(data.professional_summary || 'No professional summary available');
+
+        labRecordsHTML += `
+          <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
+            ${metadata}
+            <div class="summary-container regional-summary">${regionalSummaryHTML}</div>
+            <div class="summary-container professional-summary" style="display: none;">${professionalSummaryHTML}</div>
+          </div>
+        `;
+        index++;
       }
-      container.innerHTML += "</div>";
+      labRecordsHTML += "</div>";
+      container.innerHTML = labRecordsHTML;
     } catch (error) {
       console.error("Error loading lab records:", error);
-      container.innerHTML += "<p>Failed to load lab records.</p>";
+      container.innerHTML = `
+        <h2 class="section-title">Lab Reports</h2>
+        <p class="error">Failed to load lab records.</p>
+      `;
     }
   }
 
@@ -270,7 +412,10 @@
         throw new Error(`Server returned ${response.status}: ${data.error || 'Unknown error'}`);
       }
       if (data.success) {
+        // Update preferred language in local storage
+        localStorage.setItem('preferredLanguage', languageText);
         alert(`${category === 'prescriptions' ? 'Prescription' : 'Lab Record'} processed successfully!`);
+        // Reload summaries to reflect the new language
         category === "prescriptions" ? await loadPrescriptions(uid) : await loadLabRecords(uid);
       } else {
         throw new Error(data.error || "Processing failed");
@@ -282,67 +427,31 @@
     }
   }
 
-  function renderVisitsChart() {
-    const ctx = document.getElementById("visitsChart")?.getContext("2d");
-    if (!ctx) return;
-
-    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const visitsData = Array(12).fill().map(() => Math.floor(Math.random() * 10 + 1));
-
-    new Chart(ctx, {
-      type: "bar",
-      data: {
-        labels: months,
-        datasets: [{
-          label: "Number of Visits",
-          data: visitsData,
-          backgroundColor: "#1a73e8",
-        }],
-      },
-      options: {
-        scales: {
-          y: { beginAtZero: true, title: { display: true, text: "Visits" } },
-          x: { title: { display: true, text: "Months" } },
-        },
-      },
-    });
-  }
-
-  window.onload = () => {
-    auth.onAuthStateChanged((user) => {
+  async function initializeDashboard() {
+    try {
+      const user = auth.currentUser;
       if (!user) {
         console.log("No user authenticated, redirecting to login");
         window.location.href = "/login";
         return;
       }
-      console.log("User authenticated, initializing dashboard");
-      initializeDashboard();
-    });
-  };
-
-  async function initializeDashboard() {
-    try {
-      const response = await fetchWithAuth('/dashboard');
-      if (!response.ok) {
-        throw new Error(`Dashboard fetch failed: ${response.status}`);
-      }
-      const html = await response.text();
-      document.body.innerHTML = html;
-
-      const user = auth.currentUser;
-      if (!user) {
-        console.log("No user after dashboard load, redirecting to /login");
-        window.location.href = "/login";
-        return;
-      }
 
       const uid = user.uid;
+      console.log("User authenticated with UID:", uid);
+
+      // Check for registration prompt
+      const patientRef = db.doc(`patient_registrations/${uid}`);
+      const patientSnap = await patientRef.get();
+      if (patientSnap.exists && !patientSnap.data().consultant_id) {
+        document.getElementById("registration-prompt").style.display = "block";
+      }
+
       await Promise.all([
         loadPatientData(uid),
+        loadInitialScreening(uid),
         loadPrescriptions(uid),
         loadLabRecords(uid)
       ]);
-      renderVisitsChart();
 
       const logoutBtn = document.getElementById("logout-btn");
       if (!logoutBtn) {
@@ -384,7 +493,9 @@
         sendBtn: document.getElementById("sendBtn"),
         languageInput: document.getElementById("languageInput"),
         prescriptionBtn: document.getElementById("prescriptionBtn"),
-        labRecordBtn: document.getElementById("labRecordBtn")
+        labRecordBtn: document.getElementById("labRecordBtn"),
+        toggleLanguageBtn: document.getElementById("toggle-language"),
+        chatInputArea: document.querySelector(".chat-input-area")
       };
 
       if (Object.values(elements).some(el => !el)) {
@@ -394,6 +505,65 @@
 
       let selectedFile = null;
       let selectedCategory = "prescriptions";
+      let preferredLanguage = localStorage.getItem('preferredLanguage') || 'kannada'; // Default to Kannada
+      let displayLanguage = localStorage.getItem('displayLanguage') || 'regional'; // Default to regional
+
+      // Update toggle button text based on initial display language
+      elements.toggleLanguageBtn.textContent = displayLanguage === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
+
+      // Function to toggle summary display
+      function toggleSummaries() {
+        const cards = document.querySelectorAll('.report-card');
+        cards.forEach(card => {
+          const regionalSummary = card.querySelector('.regional-summary');
+          const professionalSummary = card.querySelector('.professional-summary');
+          if (displayLanguage === 'regional') {
+            regionalSummary.style.display = 'block';
+            professionalSummary.style.display = 'none';
+          } else {
+            regionalSummary.style.display = 'none';
+            professionalSummary.style.display = 'block';
+          }
+        });
+      }
+
+      // Initial display of summaries
+      toggleSummaries();
+
+      // Language toggle button event listener
+      elements.toggleLanguageBtn.addEventListener('click', async () => {
+        displayLanguage = displayLanguage === 'regional' ? 'english' : 'regional';
+        localStorage.setItem('displayLanguage', displayLanguage);
+        elements.toggleLanguageBtn.textContent = displayLanguage === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
+        toggleSummaries();
+      });
+
+      // Sidebar navigation (moved from inline script in HTML)
+      document.querySelectorAll('.menu-item').forEach(item => {
+        item.addEventListener('click', () => {
+          document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+
+          const section = item.getAttribute('data-section');
+          document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+
+          const targetSection = document.getElementById(section);
+          if (targetSection) {
+            targetSection.classList.add('active');
+          }
+
+          // Hide chat input area when Prescriptions or Lab Reports is selected
+          if (section === 'prescriptions' || section === 'lab-records') {
+            elements.chatInputArea.style.display = 'none';
+            elements.prescriptionBtn.classList.remove('active');
+            elements.labRecordBtn.classList.remove('active');
+          } else {
+            elements.chatInputArea.style.display = 'flex';
+            elements.prescriptionBtn.classList.remove('active');
+            elements.labRecordBtn.classList.remove('active');
+          }
+        });
+      });
 
       elements.openUploadBtn.addEventListener("click", () => elements.fileInput.click());
 
@@ -419,45 +589,12 @@
         selectedCategory = "prescriptions";
         elements.prescriptionBtn.classList.add("active");
         elements.labRecordBtn.classList.remove("active");
-        document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
-        document.querySelector('.toggle[data-section="prescriptions"]').classList.add('active');
-        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-        document.getElementById("prescriptions")?.classList.add('active');
       });
 
       elements.labRecordBtn.addEventListener("click", () => {
         selectedCategory = "lab_records";
         elements.labRecordBtn.classList.add("active");
         elements.prescriptionBtn.classList.remove("active");
-        document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
-        document.querySelector('.toggle[data-section="lab-records"]').classList.add('active');
-        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-        document.getElementById("lab-records")?.classList.add('active');
-      });
-
-      document.querySelectorAll('.toggle').forEach(toggle => {
-        toggle.addEventListener('click', () => {
-          const section = toggle.getAttribute('data-section');
-          document.querySelectorAll('.toggle').forEach(t => t.classList.remove('active'));
-          toggle.classList.add('active');
-          document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-          const targetSection = document.getElementById(section);
-          if (targetSection) {
-            targetSection.classList.add('active');
-          }
-          if (section === 'prescriptions') {
-            selectedCategory = "prescriptions";
-            elements.prescriptionBtn.classList.add('active');
-            elements.labRecordBtn.classList.remove('active');
-          } else if (section === 'lab-records') {
-            selectedCategory = "lab_records";
-            elements.labRecordBtn.classList.add('active');
-            elements.prescriptionBtn.classList.remove('active');
-          } else {
-            elements.prescriptionBtn.classList.remove('active');
-            elements.labRecordBtn.classList.remove('active');
-          }
-        });
       });
 
       elements.sendBtn.addEventListener("click", async () => {
@@ -484,7 +621,35 @@
       });
     } catch (error) {
       console.error("Dashboard initialization error:", error);
-      window.location.href = "/";
+      window.location.href = "/login";
     }
   }
+
+  // Initialize on auth state change to ensure login state is resolved
+  document.addEventListener('DOMContentLoaded', () => {
+    console.log("DOM fully loaded, checking Firebase initialization");
+    if (typeof window.auth === 'undefined' || typeof window.db === 'undefined' || typeof window.storage === 'undefined') {
+      console.error("Firebase services not initialized. Ensure firebaseConfig.js is loaded correctly.");
+      window.location.href = "/login";
+      return;
+    }
+
+    console.log("Waiting for auth state change...");
+    let hasRedirected = false; // Prevent multiple redirects
+    auth.onAuthStateChanged((user) => {
+      console.log("Auth state changed:", user ? `User: ${user.email}, UID: ${user.uid}` : "No user");
+      if (!user && !hasRedirected) {
+        console.log("No user authenticated, redirecting to login");
+        hasRedirected = true;
+        window.location.href = "/login";
+        return;
+      }
+      if (user && !hasRedirected) {
+        console.log("User authenticated, initializing dashboard");
+        initializeDashboard();
+      }
+    });
+  });
+
+  window.initializeDashboard = initializeDashboard;
 })();

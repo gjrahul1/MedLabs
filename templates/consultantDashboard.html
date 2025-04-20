@@ -4,65 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Consultant Dashboard - Med Labs</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles/consultantDashboard.css">
-</head>
-<body>
-  <!-- Header -->
-  <div class="header">
-    <div class="title">Med Labs</div>
-    <button class="logout-btn" id="logout-btn">Log out</button>
-  </div>
-
-  <!-- Dashboard Container -->
-  <div class="dashboard-container">
-    <!-- Sidebar: Patient List -->
-    <div class="sidebar" id="patient-list">
-      <div class="summary-title">Patient List</div>
-      <select id="patient-dropdown" class="patient-dropdown" onchange="handlePatientSelection(this.value)">
-        <option value="">Select a patient...</option>
-      </select>
-      <div id="patient-details" style="margin-top: 20px; display: none;"></div> <!-- Hidden by default -->
-    </div>
-    
-    <!-- Main Content Area -->
-    <div class="main-content">
-      <!-- Next Patient Section -->
-      <div class="next-patient-section" id="next-patient">
-        <div class="summary-title">Next Patient</div>
-        <div class="content-placeholder">Loading next patient...</div>
-      </div>
-      
-      <!-- Reports Section -->
-      <div class="reports-section">
-        <div class="report-card" id="prescription-summary">
-          <div class="summary-title">Prescription Summary</div>
-          <div class="content-placeholder">Loading prescriptions...</div>
-        </div>
-        <div class="report-card" id="lab-records-summary">
-          <div class="summary-title">Lab Records Summary</div>
-          <div class="content-placeholder">Loading lab records...</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Full-Screen Patient Details Overlay -->
-  <div id="patient-overlay" class="patient-overlay">
-    <div class="patient-overlay-content">
-      <button class="close-btn" onclick="closePatientOverlay()">×</button>
-      <div id="overlay-patient-details"></div>
-    </div>
-  </div>
-
   <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-storage-compat.js"></script>
-
   <!-- Chart.js for Visualization -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
   <!-- Custom Scripts -->
   <script src="/static/scripts/firebaseConfig.js"></script>
   <script src="/static/scripts/auth.js"></script>
@@ -74,12 +25,106 @@
   </script>
   <script src="/static/scripts/dashboard/consultantDashboard.js"></script>
   <script src="/static/scripts/storage.js"></script>
+</head>
+<body>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="title">Med Labs</div>
+    </div>
+    <div class="sidebar-menu">
+      <div class="menu-item active" data-section="patient-list">
+        <i class="fas fa-users"></i>
+        <span>Patient List</span>
+      </div>
+      <div class="menu-item" data-section="reports">
+        <i class="fas fa-file-medical"></i>
+        <span>Reports</span>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <button class="logout-btn" id="logout-btn">
+        <i class="fas fa-sign-out-alt"></i>
+        <span>Log out</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-content">
+    <!-- Header -->
+    <header class="dashboard-header">
+      <h1>Consultant Dashboard</h1>
+      <div class="user-info">
+        <span id="consultant-id">{{ user_info.uid }}</span>
+      </div>
+    </header>
+
+    <!-- Content Sections -->
+    <div class="content-sections">
+      <!-- Patient List Section -->
+      <section class="section active" id="patient-list">
+        <div class="patient-list-container">
+          <h2 class="section-title">Patient List</h2>
+          <div class="search-wrapper">
+            <input type="text" id="patient-search" class="patient-search-input" placeholder="Search patients...">
+            <i class="fas fa-search search-icon"></i>
+            <select id="patient-dropdown" class="patient-dropdown" onchange="handlePatientSelection(this.value)">
+              <option value="">Select a patient...</option>
+            </select>
+          </div>
+          <div id="patient-details" style="margin-top: 20px; display: none;">
+            <h3 class="section-title">Health Condition</h3>
+            <div id="health-condition" class="health-condition-card">
+              <div class="condition-map">
+                <div class="map-indicator" id="general-indicator">
+                  <i class="fas fa-heartbeat indicator-icon"></i>
+                  <span class="indicator-label">General Health</span>
+                  <div class="severity-bar">
+                    <div class="severity-fill" id="general-severity"></div>
+                  </div>
+                </div>
+                <div class="indicators-container" id="indicators-container">
+                  <!-- Dynamic indicators will be appended here -->
+                </div>
+              </div>
+              <div class="condition-details">
+                <ul class="condition-list" id="condition-list">
+                  <li>Loading health condition...</li>
+                </ul>
+                <div class="trend-chart-container">
+                  <canvas id="condition-trend-chart"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Reports Section (Prescriptions and Lab Records Side by Side) -->
+      <section class="section" id="reports">
+        <div class="reports-container">
+          <div class="report-section">
+            <h2 class="section-title">Prescriptions</h2>
+            <div id="prescription-summary" class="report-container">
+              <div class="content-placeholder">Loading prescriptions...</div>
+            </div>
+          </div>
+          <div class="report-section">
+            <h2 class="section-title">Lab Reports</h2>
+            <div id="lab-records-summary" class="report-container">
+              <div class="content-placeholder">Loading lab records...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
   <!-- Cloudflare script (unchanged) -->
   <script>
-    (function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'91a8c2670c03bfe5',t:'MTc0MTAwMDk4MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();
+    (function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'932fbfe0ef42b0d0',t:'MTc0NTEwMDgxMC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();
   </script>
-  <script>
-    (function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'91b7e4210d85bcf5',t:'MTc0MTE1OTY0OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();
-  </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'933011c03892ad8c',t:'MTc0NTEwNDE2My4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script>
 </body>
 </html>
