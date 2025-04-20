@@ -715,6 +715,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
         clarification_attempts = session.get('clarification_attempts', 0)
         doctor_recommendation_prompted = session.get('doctor_recommendation_prompted', False)
         doctor_assignment_in_progress = session.get('doctor_assignment_in_progress', False)
+        awaiting_symptom_confirmation = session.get('awaiting_symptom_confirmation', False)
 
         if transcription:
             if doctor_assignment_in_progress:
@@ -796,6 +797,122 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                         "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
                     }, 200
 
+            if awaiting_symptom_confirmation:
+                # Check if the user confirms they have no additional symptoms
+                if any(phrase in transcription_lower for phrase in ["no", "none", "nothing", "don't have", "not experiencing"]):
+                    # No additional symptoms, proceed to doctor assignment
+                    session['awaiting_symptom_confirmation'] = False
+                    all_filled = True
+                    for symptom in medical_data.get('symptoms', []):
+                        symptom_lower = symptom.lower()
+                        details = medical_data.get(symptom_lower, {})
+                        if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
+                            all_filled = False
+                            break
+                    if all_filled:
+                        doctors_list, specialty = assign_doctor(medical_data)
+                        logger.debug(f"Fetched doctors: {doctors_list}, specialty: {specialty}")
+
+                        if not doctors_list:
+                            response_text = f"I'm sorry, no doctors are currently available for the specialty '{specialty}'. Would you like to proceed with a general physician instead?"
+                            
+                            audio_path = synthesize_audio(response_text, language)
+                            session['pending_general_physician'] = True
+                            session['pending_medical_data'] = medical_data
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            }, 200
+
+                        session['pending_doctor_selection'] = doctors_list
+                        session['pending_specialty'] = specialty
+                        session['pending_medical_data'] = medical_data
+                        session['pending_uid'] = request.user.get('uid')
+                        session['doctor_assignment_in_progress'] = True
+
+                        # Immediately assign if there's only one doctor, otherwise prompt for selection
+                        if len(doctors_list) == 1:
+                            selected_doctor = doctors_list[0]
+                            consultant_id = selected_doctor['id']
+                            medical_data['consultant_id'] = consultant_id
+                            medical_data['consultant_name'] = selected_doctor['full_name']
+                            logger.debug(f"Assigned consultant ID: {consultant_id}")
+
+                            updated_data = {
+                                'consultant_id': consultant_id,
+                                'symptoms': medical_data.get('symptoms', []),
+                                'patient_name': session.get('user_info', {}).get('full_name', request.user.get('uid')),
+                                'uid': request.user.get('uid'),
+                                'timestamp': firestore.SERVER_TIMESTAMP
+                            }
+                            for symptom in medical_data.get('symptoms', []):
+                                symptom_lower = symptom.lower()
+                                if symptom_lower in medical_data:
+                                    updated_data[symptom_lower] = medical_data[symptom_lower]
+                            doc_ref.set(updated_data, merge=True)
+                            logger.info(f"Updated initial_screenings with full medical_data for UID: {request.user.get('uid')}")
+
+                            patient_ref = db.collection('patient_registrations').document(request.user.get('uid'))
+                            patient_snap = patient_ref.get()
+                            if patient_snap.exists:
+                                patient_ref.set({'consultant_id': consultant_id}, merge=True)
+                                logger.info(f"Updated patient_registrations with consultant_id: {consultant_id} for UID: {request.user.get('uid')}")
+                            else:
+                                patient_data = {
+                                    'uid': request.user.get('uid'),
+                                    'email': session.get('user_info', {}).get('email', ''),
+                                    'full_name': session.get('user_info', {}).get('full_name', request.user.get('uid')),
+                                    'consultant_id': consultant_id,
+                                    'role': 'patient'
+                                }
+                                patient_ref.set(patient_data)
+                                logger.info(f"Created new patient_registrations document with consultant_id: {consultant_id} for UID: {request.user.get('uid')}")
+
+                            session.pop('pending_doctor_selection', None)
+                            session.pop('pending_specialty', None)
+                            session.pop('pending_medical_data', None)
+                            session.pop('pending_uid', None)
+                            session.pop('doctor_assignment_in_progress', None)
+                            session.pop('doctor_recommendation_prompted', None)
+
+                            response_text = f"You have been assigned to {medical_data['consultant_name']}. Please log in to access your dashboard and view further details."
+                            
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
+                                "redirect": "/login"
+                            }, 200
+                        else:
+                            doctor_names = [doctor['full_name'] for doctor in doctors_list]
+                            response_text = f"With whom would you be comfortable? For example, you can choose {', '.join(doctor_names[:-1]) + (' or ' if len(doctor_names) > 1 else '') + (doctor_names[-1] if doctor_names else '')}. Alternatively, you can say 'anyone' to proceed with any available consultant."
+                            
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            }, 200
+                    else:
+                        response_text = "Thank you for clarifying. Do you have any other symptoms to report?"
+                        audio_path = synthesize_audio(response_text, language)
+                        return {
+                            "response": response_text,
+                            "medical_data": medical_data,
+                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        }, 200
+                else:
+                    # Re-ask for symptoms to confirm
+                    response_text = "What symptoms are you experiencing?"
+                    audio_path = synthesize_audio(response_text, language)
+                    return {
+                        "response": response_text,
+                        "medical_data": medical_data,
+                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                    }, 200
+
             current_question = None
             current_symptom = session.get('current_symptom', None)
             
@@ -827,7 +944,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                         current_question = "triggers"
                         current_symptom = symptom
                         break
-                # If all details are filled for all symptoms, proceed to doctor assignment
+                # If all details are filled for all symptoms, ask for additional symptoms
                 if not current_question:
                     all_filled = True
                     for symptom in symptoms:
@@ -836,10 +953,15 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                         if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
                             all_filled = False
                             break
-                    if all_filled and not doctor_recommendation_prompted:
-                        current_question = "proceed"
-                        current_symptom = None
-                        session['doctor_recommendation_prompted'] = True
+                    if all_filled and not awaiting_symptom_confirmation:
+                        session['awaiting_symptom_confirmation'] = True
+                        response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                        audio_path = synthesize_audio(response_text, language)
+                        return {
+                            "response": response_text,
+                            "medical_data": medical_data,
+                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        }, 200
 
             session['current_symptom'] = current_symptom
             logger.debug(f"Current question: {current_question}, Current symptom: {current_symptom}, User response: {transcription}")
@@ -859,24 +981,88 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                     proceed_with_doctor_assignment = True
                     session['clarification_attempts'] = 0
                     logger.debug("User agreed to proceed with doctor assignment via LLM interpretation")
-                elif interpretation.get("needs_clarification", True) and current_question != "triggers":
+                elif interpretation.get("needs_clarification", True):
                     clarification_attempts += 1
                     session['clarification_attempts'] = clarification_attempts
                     logger.debug(f"LLM indicates response needs clarification. Attempt {clarification_attempts}.")
 
                     if clarification_attempts >= 2:
-                        if current_question == "severity":
+                        if current_question == "symptoms":
+                            # If symptoms can't be clarified, ask for confirmation of existing symptoms
+                            if medical_data.get("symptoms"):
+                                session['awaiting_symptom_confirmation'] = True
+                                response_text = "Thank you for providing some details. I currently have the following symptoms recorded: " + ", ".join(medical_data['symptoms']) + ". Do you have any other symptoms to report?"
+                                audio_path = synthesize_audio(response_text, language)
+                                return {
+                                    "response": response_text,
+                                    "medical_data": medical_data,
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                }, 200
+                            else:
+                                response_text = "I'm sorry, I couldn't understand your symptoms after multiple attempts. Please try again later or contact support."
+                                audio_path = synthesize_audio(response_text, language)
+                                return {
+                                    "response": response_text,
+                                    "medical_data": medical_data,
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                }, 200
+                        elif current_question == "severity":
                             medical_data[current_symptom.lower()]['severity'] = "mild"
                             logger.debug(f"Set default severity to 'mild' for {current_symptom} after max clarification attempts.")
                         elif current_question == "duration":
                             medical_data[current_symptom.lower()]['duration'] = "unspecified"
                             logger.debug(f"Set default duration to 'unspecified' for {current_symptom} after max clarification attempts.")
+                        elif current_question == "triggers":
+                            medical_data[current_symptom.lower()]['triggers'] = "unknown"
+                            logger.debug(f"Set default trigger to 'unknown' for {current_symptom} after max clarification attempts.")
                         session['clarification_attempts'] = 0
+                        # Re-evaluate current_question to move forward
+                        current_question = None
+                        current_symptom = None
+                        for symptom in symptoms:
+                            symptom_lower = symptom.lower()
+                            symptom_details = medical_data[symptom_lower]
+                            if not symptom_details.get("severity"):
+                                current_question = "severity"
+                                current_symptom = symptom
+                                break
+                            elif not symptom_details.get("duration"):
+                                current_question = "duration"
+                                current_symptom = symptom
+                                break
+                            elif not symptom_details.get("triggers"):
+                                current_question = "triggers"
+                                current_symptom = symptom
+                                break
+                        if not current_question:
+                            all_filled = True
+                            for symptom in symptoms:
+                                symptom_lower = symptom.lower()
+                                details = medical_data.get(symptom_lower, {})
+                                if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
+                                    all_filled = False
+                                    break
+                            if all_filled:
+                                session['awaiting_symptom_confirmation'] = True
+                                response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                                audio_path = synthesize_audio(response_text, language)
+                                return {
+                                    "response": response_text,
+                                    "medical_data": medical_data,
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                }, 200
+                        session['current_symptom'] = current_symptom
                     else:
-                        clarification_message = (
-                            f"I’m sorry, your response is not clear. Could you please clarify your {current_question}" + 
-                            (f" for {current_symptom}?" if current_symptom else "?")
-                        )
+                        if current_question == "symptoms":
+                            clarification_message = "I’m sorry, your response is not clear. Could you please clarify your symptoms?"
+                        elif current_question == "severity":
+                            clarification_message = f"I’m sorry, your response is not clear. Could you please specify the severity of your {current_symptom} (mild, moderate, or severe)?"
+                        elif current_question == "duration":
+                            clarification_message = f"I’m sorry, your response is not clear. Could you please specify how many days or weeks you have had your {current_symptom}? For example, '2 days' or 'a few weeks'."
+                        elif current_question == "triggers":
+                            clarification_message = f"I’m sorry, your response is not clear. Could you please clarify if you feel your {current_symptom} is caused by any specific factors? If you don’t know, please say so."
+                        else:
+                            clarification_message = "I’m sorry, your response is not clear. Could you please clarify?"
                         audio_path = synthesize_audio(clarification_message, language)
                         return {
                             "response": clarification_message,
@@ -900,6 +1086,16 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 medical_data[symptom_lower] = {"severity": None, "duration": None, "triggers": None}
                         session['medical_data'] = medical_data
                         logger.debug(f"Updated symptoms list: {medical_data['symptoms']}")
+                        # Check if the user explicitly denies other symptoms (e.g., "I don't have headache")
+                        if "don't have" in transcription_lower or "no headache" in transcription_lower:
+                            session['awaiting_symptom_confirmation'] = True
+                            response_text = "Thank you for clarifying. Do you have any other symptoms to report?"
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            }, 200
                     elif category and value and interpreted_symptom:
                         symptom_lower = interpreted_symptom.lower()
                         if symptom_lower in medical_data:
@@ -955,10 +1151,15 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                     if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
                                         all_filled = False
                                         break
-                                if all_filled and not doctor_recommendation_prompted:
-                                    current_question = "proceed"
-                                    current_symptom = None
-                                    session['doctor_recommendation_prompted'] = True
+                                if all_filled:
+                                    session['awaiting_symptom_confirmation'] = True
+                                    response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                                    audio_path = synthesize_audio(response_text, language)
+                                    return {
+                                        "response": response_text,
+                                        "medical_data": medical_data,
+                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    }, 200
                             session['current_symptom'] = current_symptom
                     elif current_question == "triggers" and interpreted_symptom:
                         symptom_lower = interpreted_symptom.lower()
@@ -992,10 +1193,15 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                     if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
                                         all_filled = False
                                         break
-                                if all_filled and not doctor_recommendation_prompted:
-                                    current_question = "proceed"
-                                    current_symptom = None
-                                    session['doctor_recommendation_prompted'] = True
+                                if all_filled:
+                                    session['awaiting_symptom_confirmation'] = True
+                                    response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                                    audio_path = synthesize_audio(response_text, language)
+                                    return {
+                                        "response": response_text,
+                                        "medical_data": medical_data,
+                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    }, 200
                             session['current_symptom'] = current_symptom
                         else:
                             clarification_attempts += 1
@@ -1031,10 +1237,15 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                         if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
                                             all_filled = False
                                             break
-                                    if all_filled and not doctor_recommendation_prompted:
-                                        current_question = "proceed"
-                                        current_symptom = None
-                                        session['doctor_recommendation_prompted'] = True
+                                    if all_filled:
+                                        session['awaiting_symptom_confirmation'] = True
+                                        response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                                        audio_path = synthesize_audio(response_text, language)
+                                        return {
+                                            "response": response_text,
+                                            "medical_data": medical_data,
+                                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                        }, 200
                                 session['current_symptom'] = current_symptom
                             else:
                                 response_text = f"I’m sorry, your response is not clear. Could you please clarify if you feel your {current_symptom} is caused by any specific factors? If you don’t know, please say so."
@@ -1068,6 +1279,15 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 if 'fever' in symptom or 'dizziness' in symptom or 'rash' in symptom or 'headache' in symptom:
                                     medical_data[symptom_lower]['severity'] = 'mild'
                     session['medical_data'] = medical_data
+                    if "don't have" in transcription_lower or "no headache" in transcription_lower:
+                        session['awaiting_symptom_confirmation'] = True
+                        response_text = "Thank you for clarifying. Do you have any other symptoms to report?"
+                        audio_path = synthesize_audio(response_text, language)
+                        return {
+                            "response": response_text,
+                            "medical_data": medical_data,
+                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        }, 200
                 elif current_question == "severity" and current_symptom:
                     symptom_lower = current_symptom.lower()
                     if any(word in transcription_lower for word in ['mild', 'slight', 'mike', 'might']):
@@ -1092,6 +1312,42 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 "medical_data": medical_data,
                                 "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
                             }, 200
+                    # Re-evaluate current_question to move forward
+                    current_question = None
+                    current_symptom = None
+                    for symptom in symptoms:
+                        symptom_lower = symptom.lower()
+                        symptom_details = medical_data[symptom_lower]
+                        if not symptom_details.get("severity"):
+                            current_question = "severity"
+                            current_symptom = symptom
+                            break
+                        elif not symptom_details.get("duration"):
+                            current_question = "duration"
+                            current_symptom = symptom
+                            break
+                        elif not symptom_details.get("triggers"):
+                            current_question = "triggers"
+                            current_symptom = symptom
+                            break
+                    if not current_question:
+                        all_filled = True
+                        for symptom in symptoms:
+                            symptom_lower = symptom.lower()
+                            details = medical_data.get(symptom_lower, {})
+                            if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
+                                all_filled = False
+                                break
+                        if all_filled:
+                            session['awaiting_symptom_confirmation'] = True
+                            response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            }, 200
+                    session['current_symptom'] = current_symptom
                 elif current_question == "duration" and current_symptom:
                     symptom_lower = current_symptom.lower()
                     duration_value = None
@@ -1143,10 +1399,15 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                     if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
                                         all_filled = False
                                         break
-                                if all_filled and not doctor_recommendation_prompted:
-                                    current_question = "proceed"
-                                    current_symptom = None
-                                    session['doctor_recommendation_prompted'] = True
+                                if all_filled:
+                                    session['awaiting_symptom_confirmation'] = True
+                                    response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                                    audio_path = synthesize_audio(response_text, language)
+                                    return {
+                                        "response": response_text,
+                                        "medical_data": medical_data,
+                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    }, 200
                             session['current_symptom'] = current_symptom
                         else:
                             response_text = f"I’m sorry, your response is not clear. Could you please specify how many days or weeks you have had your {current_symptom}? For example, '2 days' or 'a few weeks'."
@@ -1183,14 +1444,19 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
                                     all_filled = False
                                     break
-                            if all_filled and not doctor_recommendation_prompted:
-                                current_question = "proceed"
-                                current_symptom = None
-                                session['doctor_recommendation_prompted'] = True
+                            if all_filled:
+                                session['awaiting_symptom_confirmation'] = True
+                                response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                                audio_path = synthesize_audio(response_text, language)
+                                return {
+                                    "response": response_text,
+                                    "medical_data": medical_data,
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                }, 200
                         session['current_symptom'] = current_symptom
                 elif current_question == "triggers" and current_symptom:
                     symptom_lower = current_symptom.lower()
-                    trigger_words = ['weather', 'infection', 'fatigue', 'stress', 'noise', 'lack of sleep', 'environment', 'caffeine', 'allergies', 'irritants']
+                    trigger_words = ['weather', 'infection', 'fatigue', 'stress', 'noise', 'lack of sleep', 'environment', 'caffeine', 'allergies', 'irritants', 'food']
                     found_trigger = None
                     for trigger in trigger_words:
                         if trigger in transcription_lower:
@@ -1211,7 +1477,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             logger.debug(f"Set default trigger to 'unknown' for {current_symptom} after max clarification attempts.")
                             session['clarification_attempts'] = 0
                         else:
-                            response_text = f"I’m sorry, your response is not clear. Could you please clarify if you feel your {current_symptom} is caused by any specific factors (e.g., infection, weather, fatigue)? If you don’t know, please say so."
+                            response_text = f"I’m sorry, your response is not clear. Could you please clarify if you feel your {current_symptom} is caused by any specific factors (e.g., stress, caffeine, environment)? If you don’t know, please say so."
                             audio_path = synthesize_audio(response_text, language)
                             return {
                                 "response": response_text,
@@ -1244,10 +1510,15 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             if not all(details.get(key) for key in ["severity", "duration", "triggers"]):
                                 all_filled = False
                                 break
-                        if all_filled and not doctor_recommendation_prompted:
-                            current_question = "proceed"
-                            current_symptom = None
-                            session['doctor_recommendation_prompted'] = True
+                        if all_filled:
+                            session['awaiting_symptom_confirmation'] = True
+                            response_text = "Thank you for providing the details. Do you have any other symptoms to report?"
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            }, 200
                     session['current_symptom'] = current_symptom
 
         session['medical_data'] = medical_data
@@ -1286,7 +1557,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
             proceed_with_doctor_assignment = True
             logger.debug("User agreed to proceed with doctor assignment via manual check")
 
-        # Only proceed with doctor assignment if symptoms are fully gathered and user has explicitly agreed after the recommendation prompt
+        # Since the user is okay with assignment without a prompt, proceed directly
         if proceed_with_doctor_assignment and doctor_recommendation_prompted:
             all_filled = True
             for symptom in medical_data.get('symptoms', []):
@@ -1443,8 +1714,19 @@ def process_conversation(audio_path=None, transcript=None, history=""):
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         json_filename = f"medical_data_{timestamp}.json"
-        json_path = os.path.join("C:", "Users", "gjrah", "Documents", "Major Project", "Voice_Demo_Project", json_filename)
-        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+
+        # Get the project directory (where app.py is located)
+        project_dir = os.path.dirname(os.path.abspath(__file__))
+
+        # Construct the path to the Users folder within the project directory
+        users_dir = os.path.join(project_dir, "Users")
+        
+        # Ensure the Users directory exists
+        os.makedirs(users_dir, exist_ok=True)
+
+        # Construct the full path for the JSON file
+        json_path = os.path.join(users_dir, json_filename)
+
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
