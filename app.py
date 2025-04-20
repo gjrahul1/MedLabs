@@ -602,7 +602,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                     return {
                         "response": response_text,
                         "medical_data": medical_data,
-                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                     }, 200
 
                 clarify_text = "I’m sorry, I didn’t understand. Please specify the doctor’s name, such as " + ", ".join([doctor['full_name'] for doctor in doctors_list[:-1]]) + (" or " if len(doctors_list) > 1 else "") + (doctors_list[-1]['full_name'] if doctors_list else "") + ", or say 'anyone' to proceed with any available consultant."
@@ -611,7 +611,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                 return {
                     "response": clarify_text,
                     "medical_data": medical_data,
-                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                 }, 200
 
         if 'pending_general_physician' in session and transcript:
@@ -628,7 +628,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                     return {
                         "response": response_text,
                         "medical_data": medical_data,
-                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                     }, 200
 
                 session['pending_doctor_selection'] = doctors_list
@@ -697,7 +697,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                     return {
                         "response": response_text,
                         "medical_data": medical_data,
-                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                     }, 200
             else:
                 response_text = "I understand. Please try again later when a specialist is available, or contact support for further assistance."
@@ -708,7 +708,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                 return {
                     "response": response_text,
                     "medical_data": medical_data,
-                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                 }, 200
 
         proceed_with_doctor_assignment = False
@@ -794,7 +794,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                     return {
                         "response": response_text,
                         "medical_data": medical_data,
-                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                     }, 200
 
             if awaiting_symptom_confirmation:
@@ -821,7 +821,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
 
                         session['pending_doctor_selection'] = doctors_list
@@ -892,7 +892,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     else:
                         response_text = "Thank you for clarifying. Do you have any other symptoms to report?"
@@ -900,39 +900,65 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                         return {
                             "response": response_text,
                             "medical_data": medical_data,
-                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                         }, 200
                 else:
                     # Process the response for new symptoms
                     possible_symptoms = ['fever', 'headache', 'inability to sleep', 'fatigue', 'rash', 'dizziness', 'swelling in the ankle', 'wheezing', 'tiredness']
                     detected_symptoms = []
-                    transcription_lower_cleaned = transcription_lower.replace(" and ", " ").replace(",", " ")
+                    # Normalize the transcription for better matching
+                    transcription_lower_cleaned = transcription_lower.replace(" and ", " ").replace(",", " ").replace("i have", "").strip()
+                    words = transcription_lower_cleaned.split()
                     for symptom in possible_symptoms:
+                        # Check if the symptom is in the cleaned transcription
                         if symptom in transcription_lower_cleaned:
                             detected_symptoms.append(symptom)
                         elif 'sleep' in transcription_lower_cleaned and 'not' in transcription_lower_cleaned and symptom == 'inability to sleep':
                             detected_symptoms.append('inability to sleep')
+                        # Handle variations of symptoms
+                        if 'tired' in transcription_lower_cleaned and symptom == 'tiredness':
+                            detected_symptoms.append('tiredness')
+                        if 'swollen' in transcription_lower_cleaned and 'ankle' in transcription_lower_cleaned and symptom == 'swelling in the ankle':
+                            detected_symptoms.append('swelling in the ankle')
                     
                     if detected_symptoms:
                         # Add new symptoms to medical_data
                         existing_symptoms = set(medical_data.get("symptoms", []))
                         new_symptoms = set(detected_symptoms) - existing_symptoms
-                        medical_data["symptoms"] = list(existing_symptoms) + list(new_symptoms)
-                        for symptom in new_symptoms:
-                            symptom_lower = symptom.lower()
-                            if symptom_lower not in medical_data:
-                                medical_data[symptom_lower] = {"severity": None, "duration": None, "triggers": None}
-                        session['medical_data'] = medical_data
-                        logger.debug(f"Updated symptoms list with new symptoms: {medical_data['symptoms']}")
-                        # Reset awaiting_symptom_confirmation to process the new symptoms
-                        session['awaiting_symptom_confirmation'] = False
+                        if new_symptoms:
+                            medical_data["symptoms"] = list(existing_symptoms) + list(new_symptoms)
+                            for symptom in new_symptoms:
+                                symptom_lower = symptom.lower()
+                                if symptom_lower not in medical_data:
+                                    medical_data[symptom_lower] = {"severity": None, "duration": None, "triggers": None}
+                            session['medical_data'] = medical_data
+                            logger.debug(f"Updated symptoms list with new symptoms: {medical_data['symptoms']}")
+                            # Reset awaiting_symptom_confirmation to process the new symptoms
+                            session['awaiting_symptom_confirmation'] = False
+                            # Respond with confirmation of new symptoms and proceed to collect details
+                            response_text = f"I have identified the symptoms as {', '.join(new_symptoms)}. How severe is your {list(new_symptoms)[0]}? (mild/moderate/severe)"
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
+                            }, 200
+                        else:
+                            # No new symptoms detected, but user provided input, so ask again to confirm
+                            response_text = "I understood those symptoms, but they are already recorded. Do you have any other symptoms to report?"
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
+                            }, 200
                     else:
                         response_text = "I’m sorry, I didn’t understand. Could you please clarify your symptoms?"
                         audio_path = synthesize_audio(response_text, language)
                         return {
                             "response": response_text,
                             "medical_data": medical_data,
-                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                         }, 200
 
             current_question = None
@@ -982,7 +1008,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                         return {
                             "response": response_text,
                             "medical_data": medical_data,
-                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                         }, 200
 
             session['current_symptom'] = current_symptom
@@ -1018,7 +1044,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 return {
                                     "response": response_text,
                                     "medical_data": medical_data,
-                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                 }, 200
                             else:
                                 response_text = "I'm sorry, I couldn't understand your symptoms after multiple attempts. Please try again later or contact support."
@@ -1026,7 +1052,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 return {
                                     "response": response_text,
                                     "medical_data": medical_data,
-                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                 }, 200
                         elif current_question == "severity":
                             medical_data[current_symptom.lower()]['severity'] = "mild"
@@ -1071,7 +1097,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 return {
                                     "response": response_text,
                                     "medical_data": medical_data,
-                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                 }, 200
                         session['current_symptom'] = current_symptom
                     else:
@@ -1089,7 +1115,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                         return {
                             "response": clarification_message,
                             "medical_data": medical_data,
-                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                         }, 200
                 else:
                     session['clarification_attempts'] = 0
@@ -1116,7 +1142,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     elif category and value and interpreted_symptom:
                         symptom_lower = interpreted_symptom.lower()
@@ -1180,7 +1206,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                     return {
                                         "response": response_text,
                                         "medical_data": medical_data,
-                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                     }, 200
                             session['current_symptom'] = current_symptom
                     elif current_question == "triggers" and interpreted_symptom:
@@ -1222,7 +1248,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                     return {
                                         "response": response_text,
                                         "medical_data": medical_data,
-                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                     }, 200
                             session['current_symptom'] = current_symptom
                         else:
@@ -1266,7 +1292,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                         return {
                                             "response": response_text,
                                             "medical_data": medical_data,
-                                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                            "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                         }, 200
                                 session['current_symptom'] = current_symptom
                             else:
@@ -1275,7 +1301,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 return {
                                     "response": response_text,
                                     "medical_data": medical_data,
-                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                 }, 200
             except Exception as e:
                 logger.warning(f"Failed to interpret response with LLM: {str(e)}. Falling back to manual extraction.")
@@ -1283,30 +1309,52 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                 if current_question == "symptoms":
                     possible_symptoms = ['fever', 'headache', 'inability to sleep', 'fatigue', 'rash', 'dizziness', 'swelling in the ankle', 'wheezing', 'tiredness']
                     detected_symptoms = []
-                    transcription_lower_cleaned = transcription_lower.replace(" and ", " ").replace(",", " ")
+                    transcription_lower_cleaned = transcription_lower.replace(" and ", " ").replace(",", " ").replace("i have", "").strip()
                     for symptom in possible_symptoms:
                         if symptom in transcription_lower_cleaned:
                             detected_symptoms.append(symptom)
                         elif 'sleep' in transcription_lower_cleaned and 'not' in transcription_lower_cleaned and symptom == 'inability to sleep':
                             detected_symptoms.append('inability to sleep')
+                        if 'tired' in transcription_lower_cleaned and symptom == 'tiredness':
+                            detected_symptoms.append('tiredness')
+                        if 'swollen' in transcription_lower_cleaned and 'ankle' in transcription_lower_cleaned and symptom == 'swelling in the ankle':
+                            detected_symptoms.append('swelling in the ankle')
                     if detected_symptoms:
                         existing_symptoms = set(medical_data.get("symptoms", []))
                         new_symptoms = set(detected_symptoms) - existing_symptoms
-                        medical_data["symptoms"] = list(existing_symptoms) + list(new_symptoms)
-                        for symptom in new_symptoms:
-                            symptom_lower = symptom.lower()
-                            if symptom_lower not in medical_data:
-                                medical_data[symptom_lower] = {"severity": None, "duration": None, "triggers": None}
-                        session['medical_data'] = medical_data
-                        logger.debug(f"Updated symptoms list: {medical_data['symptoms']}")
-                        if "don't have" in transcription_lower or "no headache" in transcription_lower:
-                            session['awaiting_symptom_confirmation'] = True
-                            response_text = "Thank you for clarifying. Do you have any other symptoms to report?"
+                        if new_symptoms:
+                            medical_data["symptoms"] = list(existing_symptoms) + list(new_symptoms)
+                            for symptom in new_symptoms:
+                                symptom_lower = symptom.lower()
+                                if symptom_lower not in medical_data:
+                                    medical_data[symptom_lower] = {"severity": None, "duration": None, "triggers": None}
+                            session['medical_data'] = medical_data
+                            logger.debug(f"Updated symptoms list: {medical_data['symptoms']}")
+                            if "don't have" in transcription_lower or "no headache" in transcription_lower:
+                                session['awaiting_symptom_confirmation'] = True
+                                response_text = "Thank you for clarifying. Do you have any other symptoms to report?"
+                                audio_path = synthesize_audio(response_text, language)
+                                return {
+                                    "response": response_text,
+                                    "medical_data": medical_data,
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
+                                }, 200
+                            # Respond with confirmation of new symptoms and proceed to collect details
+                            response_text = f"I have identified the symptoms as {', '.join(new_symptoms)}. How severe is your {list(new_symptoms)[0]}? (mild/moderate/severe)"
                             audio_path = synthesize_audio(response_text, language)
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
+                            }, 200
+                        else:
+                            # No new symptoms detected, but user provided input, so ask again to confirm
+                            response_text = "I understood those symptoms, but they are already recorded. Do you have any other symptoms to report?"
+                            audio_path = synthesize_audio(response_text, language)
+                            return {
+                                "response": response_text,
+                                "medical_data": medical_data,
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     else:
                         clarification_attempts += 1
@@ -1320,7 +1368,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 return {
                                     "response": response_text,
                                     "medical_data": medical_data,
-                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                 }, 200
                             else:
                                 response_text = "I'm sorry, I couldn't understand your symptoms after multiple attempts. Please try again later or contact support."
@@ -1328,7 +1376,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 return {
                                     "response": response_text,
                                     "medical_data": medical_data,
-                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                 }, 200
                         else:
                             response_text = "I’m sorry, your response is not clear. Could you please specify your symptoms?"
@@ -1336,7 +1384,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                 elif current_question == "severity" and current_symptom:
                     symptom_lower = current_symptom.lower()
@@ -1360,7 +1408,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     # Re-evaluate current_question to move forward
                     current_question = None
@@ -1395,7 +1443,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     session['current_symptom'] = current_symptom
                 elif current_question == "duration" and current_symptom:
@@ -1456,7 +1504,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                     return {
                                         "response": response_text,
                                         "medical_data": medical_data,
-                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                     }, 200
                             session['current_symptom'] = current_symptom
                         else:
@@ -1465,7 +1513,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     else:
                         # Re-evaluate current_question to move forward
@@ -1501,7 +1549,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                                 return {
                                     "response": response_text,
                                     "medical_data": medical_data,
-                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                    "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                                 }, 200
                         session['current_symptom'] = current_symptom
                 elif current_question == "triggers" and current_symptom:
@@ -1532,7 +1580,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     # Re-evaluate current_question to move forward
                     current_question = None
@@ -1567,7 +1615,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                             return {
                                 "response": response_text,
                                 "medical_data": medical_data,
-                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                                "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                             }, 200
                     session['current_symptom'] = current_symptom
 
@@ -1629,7 +1677,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                     return {
                         "response": response_text,
                         "medical_data": medical_data,
-                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                     }, 200
 
                 session['pending_doctor_selection'] = doctors_list
@@ -1700,7 +1748,7 @@ def process_conversation(audio_path=None, transcript=None, history=""):
                     return {
                         "response": response_text,
                         "medical_data": medical_data,
-                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None
+                        "audio_url": f"/static/{os.path.basename(audio_path)}" if audio_path else None,
                     }, 200
 
         logger.debug(f"Invoking chain with: 'input': {transcription}, 'history': {history}")
