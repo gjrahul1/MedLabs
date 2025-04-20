@@ -5,47 +5,103 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MedLabs - Medical Lab Management</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles/index.css') }}" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" />
 </head>
 <body>
     <!-- Navigation -->
-    <nav class="nav nav--left js-nav">
-        <ul>
-            <li><a href="#about-us"><span>About Us</span></a></li>
-            <li><a href="#" class="is-active"><span>Home</span></a></li>
+    <nav class="nav-bar">
+        <div class="logo">
+            <h1>MedLabs</h1>
+        </div>
+        <ul class="nav-links">
+            <li><a href="#about-us">About Us</a></li>
+            <li><a href="#" class="active">Home</a></li>
+            <li><a href="https://twitter.com" target="_blank">Contact</a></li>
+            <li><a href="/login">Login</a></li>
         </ul>
+        <div class="nav-right">
+            <button class="cta-nav" onclick="window.location.href='/login'">Get Started</button>
+        </div>
     </nav>
 
-    <!-- Right Navigation -->
-    <nav class="nav nav--right">
-        <ul>
-            <li><a href="https://twitter.com" target="_blank"><span>Contact</span></a></li>
-            <li><a href="/login"><span>Login</span></a></li>
-        </ul>
-    </nav>
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <h1>Transforming Healthcare<br>with Precision</h1>
+            <p>Streamline patient care, lab reports, and medical workflows with MedLabs.</p>
+        </div>
+        <div class="hero-visual">
+            <div id="canvas-container"></div>
+        </div>
+    </section>
 
-    <!-- Three.js Canvas and Overlay -->
-    <div id="canvas-container"></div>
-    <div class="overlay">
-        <h1 class="magic-text">MedLabs</h1>
-        <p class="magic-text subtitle">Automating Patient Care with Precision</p>
-        <button class="cta" id="get-started" onclick="window.location.href='/login'">Get Started</button>
-     </div>
+    <!-- Features Section -->
+    <section class="features">
+        <h2>Why MedLabs?</h2>
+        <div class="features-grid">
+            <div class="feature-item">
+                <i class="fas fa-user-md"></i>
+                <h3>Patient Management</h3>
+                <p>Efficiently manage patient records with a seamless interface.</p>
+            </div>
+            <div class="feature-item">
+                <i class="fas fa-flask"></i>
+                <h3>Lab Integration</h3>
+                <p>Integrate lab reports effortlessly for quick access.</p>
+            </div>
+            <div class="feature-item">
+                <i class="fas fa-heartbeat"></i>
+                <h3>Health Insights</h3>
+                <p>Gain actionable insights to improve patient outcomes.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials Section -->
+    <section class="testimonials">
+        <h2>Trusted by Healthcare Professionals</h2>
+        <div class="testimonial-carousel">
+            <div class="testimonial-item active">
+                <p class="quote">"Transformative!"</p>
+                <p class="source">Dr. John Doe, Cardiologist</p>
+            </div>
+            <div class="testimonial-item">
+                <p class="quote">"Game-Changer!"</p>
+                <p class="source">Dr. Jane Smith, General Practitioner</p>
+            </div>
+            <div class="testimonial-item">
+                <p class="quote">"Efficient!"</p>
+                <p class="source">Patient Care Team</p>
+            </div>
+            <div class="testimonial-item">
+                <p class="quote">"Reliable!"</p>
+                <p class="source">Lab Technician</p>
+            </div>
+        </div>
+        <div class="carousel-nav">
+            <span class="nav-dot active" onclick="showTestimonial(0)"></span>
+            <span class="nav-dot" onclick="showTestimonial(1)"></span>
+            <span class="nav-dot" onclick="showTestimonial(2)"></span>
+            <span class="nav-dot" onclick="showTestimonial(3)"></span>
+        </div>
+    </section>
 
     <!-- About Us Section -->
     <section id="about-us" class="about-us">
-        <h2>About Us</h2>
-        <div class="team-container">
-            <div class="team-box">
+        <h2>Meet Our Team</h2>
+        <div class="team-grid">
+            <div class="team-member">
                 <h3>G J Rahul</h3>
                 <p>GEN AI Engineer</p>
                 <a href="https://www.linkedin.com/in/gjrahul/" target="_blank">LinkedIn</a>
             </div>
-            <div class="team-box">
+            <div class="team-member">
                 <h3>Rithika R</h3>
                 <p>Developer</p>
                 <a href="https://www.linkedin.com/in/rithika-chettiar-534790255/" target="_blank">LinkedIn</a>
             </div>
-            <div class="team-box">
+            <div class="team-member">
                 <h3>Vinit</h3>
                 <p>Developer</p>
                 <a href="#">LinkedIn</a>
@@ -53,7 +109,12 @@
         </div>
     </section>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <!-- Footer -->
+    <footer class="footer">
+        <p>© 2025 MedLabs. All rights reserved.</p>
+    </footer>
+
+    <!-- Scripts -->
     <script src="{{ url_for('static', filename='scripts/index.js') }}"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'93329a634cb553c7',t:'MTc0NTEzMDczMi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
