@@ -2,9 +2,9 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
+import pdfplumber
 import logging
 import re
-import firebase_admin
 from firebase_admin import firestore
 import os
 from dotenv import load_dotenv
@@ -34,37 +34,7 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         logger.error("GEMINI_API_KEY not found in .env file")
         raise ValueError("GEMINI_API_KEY not found in .env file")
 
-    # Gemini model
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-pro",
-        temperature=0,
-        max_tokens=None,
-        timeout=None,
-        max_retries=2,
-        google_api_key=api_key
-    )
-
-    parser = StrOutputParser()
-
-    # Handle symptom mapping separately
-    if category == "symptom_mapping":
-        # The extracted_text is already the prompt for mapping the symptom to a specialty
-        prompt = PromptTemplate.from_template("{text}")
-        chain = prompt | llm | parser
-        try:
-            specialty = chain.invoke({"text": extracted_text})
-            logger.debug(f"Gemini mapped symptom to specialty: {specialty}")
-            return {
-                "regional_summary": specialty,  # Use regional_summary to return the specialty
-                "professional_summary": "",
-                "medical_history": None,
-                "language": "en"
-            }
-        except Exception as e:
-            logger.error(f"Error mapping symptom with Gemini: {str(e)}")
-            raise
-
-    # Clean and sanitize the extracted text for other categories
+    # Clean and sanitize the extracted text
     cleaned_text = re.sub(r'[^\x00-\x7F]+', ' ', extracted_text)
     
     # Remove personal identifiers
@@ -140,6 +110,18 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     )
     professional_prompt = PromptTemplate.from_template(professional_template)
     professional_inputs = {"text": professional_cleaned_text}
+
+    # Gemini model
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-1.5-pro",
+        temperature=0,
+        max_tokens=None,
+        timeout=None,
+        max_retries=2,
+        google_api_key=api_key
+    )
+
+    parser = StrOutputParser()
 
     # Chains using | operator
     regional_chain = regional_prompt | llm | parser
