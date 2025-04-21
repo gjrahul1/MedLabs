@@ -2,20 +2,20 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('voice_bot.js loaded, initializing...');
   
     // DOM elements
-    const voiceCircle = document.getElementById('voiceCircle');
     const controlButton = document.getElementById('controlButton');
     const audioPlayer = document.getElementById('audioPlayer');
     const transcriptDiv = document.getElementById('transcriptContent');
     const statusDiv = document.getElementById('status-message');
+    const transcriptPanel = document.getElementById('transcriptPanel');
   
     // Check for missing DOM elements
-    if (!voiceCircle || !controlButton || !audioPlayer || !transcriptDiv || !statusDiv) {
+    if (!controlButton || !audioPlayer || !transcriptDiv || !statusDiv || !transcriptPanel) {
         console.error('Missing required DOM elements:', {
-            voiceCircle: !!voiceCircle,
             controlButton: !!controlButton,
             audioPlayer: !!audioPlayer,
             transcriptDiv: !!transcriptDiv,
-            statusDiv: !!statusDiv
+            statusDiv: !!statusDiv,
+            transcriptPanel: !!transcriptPanel
         });
         alert('Error: Required elements not found. Please check the HTML.');
         return;
@@ -28,7 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
     // Check Firebase and auth
     if (!window.firebase || !window.auth) {
-        console.error('Firebase not initialized. Ensure firebaseConfig.js is loaded.');
+        console.error('Firebase not initialized. Ensure Firebase SDK is loaded.');
         statusDiv.textContent = 'Authentication service unavailable. Please try again later.';
         controlButton.disabled = true;
         return;
@@ -49,45 +49,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
     console.log(`SpeechRecognition language set to: ${recognition.lang}`);
-    recognition.continuous = false;
+    recognition.continuous = true; // Enable continuous recording to prevent auto-stop on pause
     recognition.interimResults = false;
   
     let idToken = sessionStorage.getItem('idToken');
     let recognizing = false;
     let conversationComplete = false;
-  
-    // Initialize authentication
-    window.auth.onAuthStateChanged(async (user) => {
-        try {
-            if (user) {
-                idToken = await user.getIdToken(true);
-                sessionStorage.setItem('idToken', idToken);
-                console.log('ID token retrieved:', idToken.substring(0, 20) + '...');
-                controlButton.disabled = false;
-                controlButton.textContent = 'Start Recording';
-                statusDiv.textContent = '';
-                attachRecognitionHandlers();
-                initiateConversation();
-            } else {
-                console.error('No user authenticated. Redirecting to login.');
-                statusDiv.textContent = 'Please log in to continue.';
-                window.location.href = '/login';
-                controlButton.disabled = true;
-            }
-        } catch (error) {
-            console.error('Error in onAuthStateChanged:', error);
-            statusDiv.textContent = 'Initialization failed: ' + error.message + '. Please refresh the page.';
-            controlButton.disabled = true;
-        }
-    });
+    let userInitiatedStop = false; // Flag to track if stop was initiated by user
+    let currentTranscript = ''; // Store transcript during recording
   
     // Update transcript display
     function updateTranscript(speaker, text) {
+        console.log(`Updating transcript - Speaker: ${speaker}, Text: ${text}`);
         const entry = document.createElement('p');
         entry.className = speaker.toLowerCase();
-        entry.innerHTML = `<strong>${speaker}:</strong> ${text}`;
+        entry.innerHTML = `<strong>${speaker}:</strong> <span>${text}</span>`;
         transcriptDiv.appendChild(entry);
+  
+        // Limit to maxMessages AI-User pairs (2 messages per pair)
+        const maxMessages = 3;
+        const messages = transcriptDiv.getElementsByTagName('p');
+        console.log(`Current number of messages: ${messages.length}`);
+        if (messages.length > maxMessages * 2) {
+            transcriptDiv.removeChild(messages[0]);
+            console.log('Removed oldest message to maintain limit');
+        }
         transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+        console.log('Transcript updated and scrolled to bottom');
     }
   
     // Toggle button and visual state
@@ -95,8 +83,13 @@ document.addEventListener('DOMContentLoaded', () => {
         recognizing = isRecognizing;
         controlButton.textContent = isRecognizing ? 'Stop Recording' : 'Start Recording';
         controlButton.classList.toggle('stop', isRecognizing);
-        voiceCircle.classList.toggle('recording', isRecognizing);
         statusDiv.textContent = isRecognizing ? 'Recording...' : '';
+        // Toggle recording animation on transcript panel
+        if (isRecognizing) {
+            transcriptPanel.classList.add('recording');
+        } else {
+            transcriptPanel.classList.remove('recording');
+        }
         console.log(`Button state updated, recognizing: ${isRecognizing}, disabled: ${controlButton.disabled}`);
     }
   
@@ -162,7 +155,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         audioPlayer.src = data.audio_url;
                         await new Promise((resolve, reject) => {
                             audioPlayer.onended = () => {
-                                voiceCircle.classList.remove('vibrating');
                                 console.log('Initial greeting audio finished playing.');
                                 resolve();
                             };
@@ -175,7 +167,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 console.log(`Audio duration: ${audioPlayer.duration} seconds`);
                             };
                             audioPlayer.play().then(() => {
-                                voiceCircle.classList.add('vibrating');
+                                console.log('Playing initial greeting audio');
                             }).catch((error) => {
                                 console.error('Initial greeting audio playback failed:', error);
                                 statusDiv.textContent = 'Failed to play AI greeting audio. Please try refreshing the page.';
@@ -206,6 +198,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function processTranscript(transcript) {
         try {
             console.log('Sending transcript to /start_conversation...');
+            // Add processing animation
+            transcriptPanel.classList.add('processing');
             const response = await fetch('/start_conversation', {
                 method: 'POST',
                 headers: {
@@ -223,6 +217,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             console.log('Received server response:', data);
             if (data.success) {
+                // Remove processing animation
+                transcriptPanel.classList.remove('processing');
                 // Update the response message to suggest logging in
                 let responseText = data.response;
                 if (responseText.includes("Redirecting you to the dashboard")) {
@@ -239,7 +235,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Use a Promise to wait for the audio to finish playing
                     await new Promise((resolve, reject) => {
                         audioPlayer.onended = () => {
-                            voiceCircle.classList.remove('vibrating');
                             console.log('Response audio finished playing.');
                             resolve();
                         };
@@ -252,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             console.log(`Audio duration: ${audioPlayer.duration} seconds`);
                         };
                         audioPlayer.play().then(() => {
-                            voiceCircle.classList.add('vibrating');
+                            console.log('Playing response audio');
                         }).catch((error) => {
                             console.error('Audio playback failed:', error);
                             statusDiv.textContent = 'Failed to play AI response audio.';
@@ -263,80 +258,153 @@ document.addEventListener('DOMContentLoaded', () => {
                     await new Promise(resolve => setTimeout(resolve, 500));
                 }
   
-                if (responseText.includes("Please log in to access your dashboard")) {
+                // Check for doctor assignment message and redirect only at the end
+                if (responseText.includes("You have been assigned to") && responseText.includes("Please log in to view details.")) {
                     conversationComplete = true;
-                    console.log('Conversation completed, setting flag to redirect to login.');
+                    console.log('Doctor assigned, setting flag to redirect to login.');
+                    handleRedirection(data);
                 }
-                handleRedirection(data);
             } else {
                 console.error('Server error:', data.error);
                 statusDiv.textContent = data.error || 'Error processing transcript. Please try again.';
+                transcriptPanel.classList.remove('processing');
             }
         } catch (error) {
             console.error('Fetch error:', error);
             statusDiv.textContent = `Failed to process transcript: ${error.message}. Please check server logs or try again later.`;
+            transcriptPanel.classList.remove('processing');
         }
+    }
+  
+    // Initialize authentication with timeout
+    const authTimeout = setTimeout(() => {
+        console.error('Authentication timeout: onAuthStateChanged did not fire within 10 seconds.');
+        statusDiv.textContent = 'Voice bot not initialized: Authentication timed out. Please refresh the page.';
+        controlButton.disabled = true;
+        controlButton.textContent = 'Initialization Failed';
+    }, 10000); // 10 seconds timeout
+  
+    try {
+        window.auth.onAuthStateChanged(async (user) => {
+            clearTimeout(authTimeout); // Clear timeout on success or failure
+            try {
+                if (user) {
+                    idToken = await user.getIdToken(true);
+                    sessionStorage.setItem('idToken', idToken);
+                    console.log('ID token retrieved:', idToken.substring(0, 20) + '...');
+                    controlButton.disabled = false;
+                    controlButton.textContent = 'Start Recording';
+                    statusDiv.textContent = '';
+                    attachRecognitionHandlers();
+                    initiateConversation();
+                } else {
+                    console.error('No user authenticated. Redirecting to login.');
+                    statusDiv.textContent = 'Please log in to continue.';
+                    window.location.href = '/login';
+                    controlButton.disabled = true;
+                    controlButton.textContent = 'Login Required';
+                }
+            } catch (error) {
+                console.error('Error in onAuthStateChanged:', error);
+                statusDiv.textContent = 'Initialization failed: ' + error.message + '. Please refresh the page.';
+                controlButton.disabled = true;
+                controlButton.textContent = 'Initialization Failed';
+            }
+        });
+    } catch (error) {
+        console.error('Error setting up onAuthStateChanged:', error);
+        clearTimeout(authTimeout);
+        statusDiv.textContent = 'Failed to set up authentication: ' + error.message + '. Please refresh the page.';
+        controlButton.disabled = true;
+        controlButton.textContent = 'Initialization Failed';
     }
   
     // Attach SpeechRecognition event handlers
     function attachRecognitionHandlers() {
         recognition.onstart = () => {
             toggleButtonState(true);
+            userInitiatedStop = false; // Reset flag when recording starts
+            currentTranscript = ''; // Reset transcript when recording starts
             console.log('Speech recognition started');
         };
   
         recognition.onend = () => {
-            toggleButtonState(false);
-            console.log('Speech recognition stopped');
+            if (!userInitiatedStop) {
+                // If stop was not user-initiated, restart recognition to keep it continuous
+                console.log('Speech recognition ended unexpectedly, restarting...');
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.error('Error restarting recognition:', error);
+                    toggleButtonState(false);
+                    statusDiv.textContent = 'Failed to restart recording: ' + error.message;
+                }
+            } else {
+                // If stop was user-initiated, update the button state and process the transcript
+                toggleButtonState(false);
+                console.log('Speech recognition stopped by user');
+                // Process the collected transcript only if there is one
+                if (currentTranscript.trim()) {
+                    updateTranscript('User', currentTranscript);
+                    if (!idToken) {
+                        console.error('No idToken available');
+                        statusDiv.textContent = 'Authentication error. Please log in again.';
+                        return;
+                    }
+                    processTranscript(currentTranscript);
+                    currentTranscript = ''; // Reset after processing
+                }
+            }
         };
   
         recognition.onresult = async (event) => {
-            let transcript = '';
+            let transcriptPiece = '';
             for (let i = event.resultIndex; i < event.results.length; ++i) {
                 if (event.results[i].isFinal) {
-                    transcript += event.results[i][0].transcript;
+                    transcriptPiece += event.results[i][0].transcript;
                 }
             }
-            if (transcript.trim()) {
-                console.log('Transcribed text:', transcript);
-                updateTranscript('User', transcript);
-  
-                if (!idToken) {
-                    console.error('No idToken available');
-                    statusDiv.textContent = 'Authentication error. Please log in again.';
-                    recognition.stop();
-                    return;
-                }
-  
-                await processTranscript(transcript);
+            if (transcriptPiece.trim()) {
+                console.log('Transcribed piece:', transcriptPiece);
+                // Append to the current transcript instead of processing immediately
+                currentTranscript += (currentTranscript ? ' ' : '') + transcriptPiece;
+                console.log('Current transcript:', currentTranscript);
             }
         };
   
         recognition.onerror = (event) => {
             console.error('Speech recognition error:', event.error);
-            toggleButtonState(false);
             if (event.error === 'not-allowed') {
                 statusDiv.textContent = 'Microphone access denied. Please allow access in browser settings.';
+                toggleButtonState(false);
+                userInitiatedStop = true; // Mark as user-initiated to prevent restart
             } else if (event.error === 'no-speech') {
-                statusDiv.textContent = 'No speech detected. Please try again.';
+                console.log('No speech detected, continuing to listen...');
+                // Do not toggle button state, let recording continue
             } else {
                 statusDiv.textContent = `Speech recognition error: ${event.error}`;
+                toggleButtonState(false);
+                userInitiatedStop = true; // Mark as user-initiated to prevent restart
             }
         };
     }
   
     // Button click handler
     controlButton.addEventListener('click', async () => {
-        console.log('Button clicked, recognizing:', recognizing);
+        console.log('Button click event triggered, recognizing:', recognizing, 'disabled:', controlButton.disabled);
         if (!idToken) {
+            console.warn('idToken not available, cannot proceed with recording');
             statusDiv.textContent = 'Please wait for authentication to complete.';
             return;
         }
   
         if (recognizing) {
+            userInitiatedStop = true; // Mark stop as user-initiated
             recognition.stop();
+            console.log('Stop recording clicked');
         } else {
             try {
+                console.log('Start recording clicked');
                 recognition.start();
             } catch (error) {
                 console.error('Error starting recognition:', error);
@@ -346,4 +414,4 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   
     console.log('Voice bot initialization complete');
-  });
+});
