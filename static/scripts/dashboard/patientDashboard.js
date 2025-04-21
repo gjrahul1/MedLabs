@@ -104,14 +104,16 @@
       console.error("Screening container not found");
       return;
     }
-
+  
     container.innerHTML = `
       <h2 class="section-title">Initial Screening Details</h2>
       <div class="content-placeholder">Loading initial screening details...</div>
     `;
-
+  
     try {
       const screeningDoc = await db.collection("initial_screenings").doc(`initial_screening_${uid}`).get();
+      console.log("Fetching initial screening for UID:", uid, "Document exists:", screeningDoc.exists);
+  
       if (!screeningDoc.exists) {
         container.innerHTML = `
           <h2 class="section-title">Initial Screening Details</h2>
@@ -119,40 +121,67 @@
         `;
         return;
       }
-
+  
       const data = screeningDoc.data();
+      console.log("Initial screening data fetched:", data);
+  
+      // Format array fields for display
+      const symptomsList = Array.isArray(data.symptoms) ? data.symptoms.join(", ") : data.symptoms || 'N/A';
+      const severityList = Array.isArray(data.severity) ? data.severity : [data.severity || 'Unknown'];
+      const severityBadges = severityList.map(severity => `
+        <span class="severity-badge ${severity.toLowerCase()}">${severity}</span>
+      `).join(" ");
+      const durationList = Array.isArray(data.duration) ? data.duration.join(", ") : data.duration || 'N/A';
+      const triggersList = Array.isArray(data.triggers) ? data.triggers.join(", ") : data.triggers || 'N/A';
+  
+      // Fetch consultant name if consultant_id exists
+      let consultantName = "Not Assigned";
+      if (data.consultant_id) {
+        try {
+          const consultantSnap = await db.doc(`consultant_registrations/${data.consultant_id}`).get();
+          if (consultantSnap.exists) {
+            consultantName = consultantSnap.data().full_name || "Unknown";
+            console.log("Consultant name fetched for ID:", data.consultant_id, "Name:", consultantName);
+          } else {
+            console.warn(`No consultant found for ID: ${data.consultant_id}`);
+          }
+        } catch (error) {
+          console.error("Error fetching consultant name:", error);
+        }
+      }
+  
       const screeningHTML = `
         <h2 class="section-title">Initial Screening Details</h2>
         <div class="screening-cards">
           <div class="screening-card">
             <div class="card-header"><i class="fas fa-heartbeat card-icon"></i> Symptoms</div>
-            <div class="card-content">${data.symptoms || 'N/A'}</div>
+            <div class="card-content">${symptomsList}</div>
           </div>
           <div class="screening-card">
             <div class="card-header"><i class="fas fa-exclamation-triangle card-icon"></i> Severity</div>
-            <div class="card-content">
-              <span class="severity-badge ${data.severity ? data.severity.toLowerCase() : 'unknown'}">
-                ${data.severity || 'Unknown'}
-              </span>
-            </div>
+            <div class="card-content">${severityBadges}</div>
           </div>
           <div class="screening-card">
             <div class="card-header"><i class="fas fa-clock card-icon"></i> Duration</div>
-            <div class="card-content">${data.duration || 'N/A'}</div>
+            <div class="card-content">${durationList}</div>
           </div>
           <div class="screening-card">
             <div class="card-header"><i class="fas fa-bolt card-icon"></i> Triggers</div>
-            <div class="card-content">${data.triggers || 'N/A'}</div>
+            <div class="card-content">${triggersList}</div>
+          </div>
+          <div class="screening-card">
+            <div class="card-header"><i class="fas fa-user-md card-icon"></i> Consultant</div>
+            <div class="card-content">${consultantName}${data.specialty ? ` (${data.specialty})` : ''}</div>
           </div>
           <div class="screening-card full-width">
             <div class="card-header"><i class="fas fa-calendar-alt card-icon"></i> Date</div>
-            <div class="card-content">${new Date(data.timestamp?.seconds * 1000).toLocaleDateString()}</div>
+            <div class="card-content">${data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleDateString() : 'N/A'}</div>
           </div>
         </div>
       `;
-
+  
       container.innerHTML = screeningHTML;
-
+  
       // Add fade-in animation to screening cards
       container.querySelectorAll('.screening-card').forEach((card, index) => {
         card.style.animation = `fadeIn 0.5s ease-in-out ${index * 0.1}s forwards`;
@@ -161,7 +190,7 @@
       console.error("Error loading initial screening:", error);
       container.innerHTML = `
         <h2 class="section-title">Initial Screening Details</h2>
-        <p class="error">Failed to load initial screening data.</p>
+        <p class="error">Failed to load initial screening data: ${error.message}</p>
       `;
     }
   }
