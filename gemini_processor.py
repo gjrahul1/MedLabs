@@ -2,7 +2,6 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import ChatGoogleGenerativeAI
-import pdfplumber
 import logging
 import re
 from firebase_admin import firestore
