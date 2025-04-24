@@ -11,9 +11,9 @@ langchain-core>=0.3.51,<1.0.0
 langchain-google-genai
 langdetect==1.0.9
 openai==1.44.1
-# pyrebase==3.0.27  # Commenting out pyrebase due to strict requests dependency
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
-requests>=2.27,<3.0.0  # Setting a compatible requests range for gtts and requests-toolbelt
+requests>=2.27,<3.0.0  
 werkzeug==3.0.4
 langchain-openai
+func_timeout
