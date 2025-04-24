@@ -1,38 +1,39 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Voice Bot - Further Patient Registration</title>
-  <link rel="stylesheet" href="/static/styles/voice_bot.css?v=1.2" />
-  <!-- Firebase SDK (Compat Version) -->
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-storage-compat.js"></script>
-  <!-- Firebase Config -->
-  <script src="/static/scripts/firebaseConfig.js"></script>
-  <!-- Voice Bot Script -->
-  <script src="/static/scripts/js/voice_bot.js" defer></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Patient Registration</title>
+  <link rel="stylesheet" href="/static/styles/voice_bot.css">
+ <!-- Load Firebase SDK (Compat Version) -->
+<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-storage-compat.js"></script>
+
+<!-- Load firebaseConfig.js to initialize Firebase -->
+<script src="/static/scripts/firebaseConfig.js"></script>
+
+<!-- Load voice_bot.js after Firebase is initialized -->
+<script src="/static/scripts/voice_bot.js"></script>
 </head>
 <body>
   <div class="container">
     <h1 class="heading">AI Receptionist</h1>
-    <button class="control-button" id="controlButton">Start Recording</button>
-    <div id="status-message"></div>
-    <div class="transcript-panel" id="transcriptPanel">
-      <h3>Transcript</h3>
-      <div class="transcript-content" id="transcriptContent"></div>
+    <div id="status-message">Initializing...</div>
+    <div id="transcriptPanel" class="transcript-panel">
+      <h3>Conversation</h3>
+      <div id="transcriptContent" class="transcript-content"></div>
     </div>
+    <button id="controlButton" class="control-button" disabled>Start Recording</button>
+    <audio id="audioPlayer" style="display: none;"></audio>
   </div>
-  <audio id="audioPlayer" src="" style="display: none;"></audio>
   <script>
-    // Pass server-side data to JavaScript
     window.appData = {
       uid: "{{ user_info.uid }}",
-      patientName: "{{ user_info.patient_name }}",
-      preferredLanguage: "{{ session.get('preferred_language', 'en') }}"
+      patientName: "{{ user_info.patient_name }}"
     };
   </script>
+  <script src="/static/scripts/voice_bot.js"></script>
 </body>
 </html>

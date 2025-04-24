@@ -115,12 +115,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (response.ok) {
         try {
-          const customToken = data.customToken;
-          console.log('Custom token received:', customToken.substring(0, 20) + '...');
-          const userCredential = await firebase.auth().signInWithCustomToken(customToken);
+          // Sign in the user with email and password
+          console.log(`Attempting to sign in with email: ${userData.email}`);
+          const userCredential = await firebase.auth().signInWithEmailAndPassword(userData.email, userData.password);
           const user = userCredential.user;
           if (user) {
-            const idToken = await user.getIdToken();
+            const idToken = await user.getIdToken(true);
             console.log('Firebase ID Token:', idToken.substring(0, 20) + '...');
             sessionStorage.setItem('idToken', idToken);
 
@@ -151,7 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 window.location.href = '/login';
               }
             } else {
-              window.location.href = data.redirect || '/login';
+              window.location.href = data.redirect || '/dashboard';
             }
           } else {
             throw new Error('Firebase user authentication failed');

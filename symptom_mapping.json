@@ -13,8 +13,9 @@
     "edema": "cardiology",
     "urination issues": "nephrology",
     "kidney pain": "nephrology",
+    "hematuria": "urology",
     "kidney stones": "urology",
-    "fatigue": "cardiology",
+    "fatigue": "general medicine",
     "weight changes": "endocrinology",
     "thirst": "endocrinology",
     "fever": "general medicine",
@@ -59,5 +60,8 @@
     "fracture": "orthopedics",
     "unknown": "general medicine",
     "exhaustion": "oncology",
-    "lumps in neck": "general surgery"
+    "lumps in neck": "general surgery",
+    "cough": "general medicine",
+    "tingling numbness": "neurology",
+    "night sweats": "oncology"
 }

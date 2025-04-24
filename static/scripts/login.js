@@ -44,7 +44,7 @@ function showFields(role) {
   }
 }
 
-async function login(event) {
+async function login(event, retryCount = 0) {
   event.preventDefault();
 
   const role = document.getElementById('role').value;
@@ -120,16 +120,24 @@ async function login(event) {
       body: JSON.stringify({ role, email, uid: user.uid })
     });
 
-    if (response.redirected) {
-      window.location.href = response.url;
-    } else if (response.ok) {
-      const data = await response.json();
+    const data = await response.json();
+    if (response.ok) {
+      // Store the ID token in sessionStorage
       sessionStorage.setItem('idToken', idToken);
       console.log('Stored ID Token in sessionStorage:', idToken);
-      window.location.href = '/dashboard';
+      // Ensure Firebase Authentication state is persisted
+      await auth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
+      window.location.href = data.redirect;
     } else {
-      const errorData = await response.json();
-      throw new Error(`Login Failed: ${errorData.error}`);
+      // Handle clock skew error with retry
+      if (data.details && data.details.includes("Token used too early") && retryCount < 3) {
+        console.warn(`Clock skew detected, retrying login (${retryCount + 1}/3)...`);
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+        return login(event, retryCount + 1);
+      } else if (data.details && data.details.includes("Token used too early")) {
+        throw new Error('Login failed due to persistent clock skew. Please ensure your device\'s clock is synchronized with the correct time, then refresh the page and try again.');
+      }
+      throw new Error(`Login Failed: ${data.error} - ${data.details || ''}`);
     }
   } catch (error) {
     console.error('Login Error:', error);
@@ -164,6 +172,6 @@ window.onload = () => {
   showFields('patient');
   const loginForm = document.getElementById('login-form');
   if (loginForm) {
-    loginForm.addEventListener('submit', login);
+    loginForm.addEventListener('submit', (event) => login(event));
   }
 };
