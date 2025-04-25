@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def process_text_with_gemini(extracted_text: str, category: str = None, language: str = "kannada", patient_name: str = "ರೋಗಿ", existing_text: str = None, uid: str = None) -> dict:
     """
-    Process the extracted text using Gemini to generate regional and professional summaries.
+    Process the extracted text using Gemini to generate regional, professional, and English patient summaries.
     Args:
         extracted_text (str): Text extracted from the image or PDF.
         category (str): Category of the document ('prescriptions' or 'lab_records').
@@ -26,7 +26,7 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         existing_text (str): Existing summary text for prescriptions, if any.
         uid (str): Unique identifier of the patient.
     Returns:
-        dict: Contains regional_summary, professional_summary, medical_history, and language.
+        dict: Contains regional_summary, professional_summary, english_patient_summary, medical_history, and language.
     """
     # Initialize Firestore client inside the function
     db = firestore.client()
@@ -74,13 +74,14 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         selected_language = "kannada"
     logger.debug(f"Selected language for regional summary: {selected_language}")
 
-    # Regional/English Summary for Patient
+    # Regional Summary for Patient (in specified language)
     if category == 'prescriptions' and existing_text:
         regional_template_text = (
-            f"You are Gemini, a helpful language model. Analyze the following English prescription text and create a brief but detailed, "
-            f"point-wise summary {language_prompts[selected_language]}. Personalize it with the patient's name '{{patient_name}}'. Focus only on medical "
-            f"information (e.g., medicines, dosages). Include the patient's condition, recommended actions or tests, and medicines with dosages. "
-            f"Existing text:\n{{existing_text}}\n\nNew text:\n{{new_text}}\n\nOutput only the summary points."
+            f"You are Gemini, a helpful language model. Analyze the following English prescription text and create a brief but detailed summary {language_prompts[selected_language]}. "
+            f"Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a point-wise summary where each point starts with a dash (-). "
+            f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. "
+            f"Focus only on medical information (e.g., medicines, dosages). Include the patient's condition, recommended actions or tests, and medicines with dosages. "
+            f"Existing text:\n{{existing_text}}\n\nNew text:\n{{new_text}}\n\nOutput the summary as a Markdown string."
         )
         regional_prompt = PromptTemplate.from_template(regional_template_text)
         regional_inputs = {
@@ -90,10 +91,11 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         }
     else:
         regional_template_text = (
-            f"You are Gemini, a helpful language model. Analyze the following English medical text and create a brief but detailed, "
-            f"point-wise summary {language_prompts[selected_language]}. Personalize it with the patient's name '{{patient_name}}'. Focus only on medical "
-            f"information. Include the patient's condition and recommended actions or follow-ups. "
-            f"Text:\n{{text}}\n\nOutput only the summary points."
+            f"You are Gemini, a helpful language model. Analyze the following English medical text and create a brief but detailed summary {language_prompts[selected_language]}. "
+            f"Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a point-wise summary where each point starts with a dash (-). "
+            f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. "
+            f"Focus only on medical information. Include the patient's condition and recommended actions or follow-ups. "
+            f"Text:\n{{text}}\n\nOutput the summary as a Markdown string."
         )
         regional_prompt = PromptTemplate.from_template(regional_template_text)
         regional_inputs = {
@@ -105,10 +107,25 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     professional_template = (
         f"You are Gemini, a helpful language model. Analyze the following English medical text and create a concise, professional medical summary in English "
         f"for a doctor. Start with the patient's condition as the first point, followed by key findings, prescribed medications with dosages (if applicable), "
-        f"and recommended follow-ups or tests. Do not include the patient's name or age. Text:\n{{text}}\n\nOutput only the summary points."
+        f"and recommended follow-ups or tests. Use Markdown formatting: each point should start with a dash (-). "
+        f"Do not include the patient's name or age. Text:\n{{text}}\n\nOutput the summary as a Markdown string."
     )
     professional_prompt = PromptTemplate.from_template(professional_template)
     professional_inputs = {"text": professional_cleaned_text}
+
+    # English Summary for Patient (always in English, concise and patient-friendly)
+    english_patient_template = (
+        f"You are Gemini, a helpful language model. Analyze the following English medical text and create a concise, patient-friendly summary in English "
+        f"for the patient. Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a point-wise summary where each point starts with a dash (-). "
+        f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. "
+        f"Use simple, warm, and clear language, avoiding complex medical jargon. Focus only on the most important medical information, such as the patient's condition "
+        f"and what they need to do (e.g., take medicine, follow-up actions). Text:\n{{text}}\n\nOutput the summary as a Markdown string."
+    )
+    english_patient_prompt = PromptTemplate.from_template(english_patient_template)
+    english_patient_inputs = {
+        "patient_name": patient_name,
+        "text": cleaned_text
+    }
 
     # Gemini model
     llm = ChatGoogleGenerativeAI(
@@ -125,13 +142,16 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     # Chains using | operator
     regional_chain = regional_prompt | llm | parser
     professional_chain = professional_prompt | llm | parser
+    english_patient_chain = english_patient_prompt | llm | parser
 
     try:
         regional_summary = regional_chain.invoke(regional_inputs)
         professional_summary = professional_chain.invoke(professional_inputs)
+        english_patient_summary = english_patient_chain.invoke(english_patient_inputs)
 
         logger.debug(f"Regional Summary ({selected_language}): {regional_summary}")
         logger.debug(f"Professional Summary (English): {professional_summary}")
+        logger.debug(f"English Patient Summary: {english_patient_summary}")
 
         # Generate Medical History if UID is provided
         medical_history = None
@@ -146,8 +166,9 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         return {
             "regional_summary": regional_summary,
             "professional_summary": professional_summary,
+            "english_patient_summary": english_patient_summary,
             "medical_history": medical_history,
-            "language": selected_language  # Include the language used for the regional summary
+            "language": selected_language
         }
     except Exception as e:
         logger.error(f"Error processing text with Gemini: {e}")

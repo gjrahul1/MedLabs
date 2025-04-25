@@ -460,7 +460,6 @@ body {
   max-width: 300px;
   display: inline-block; /* Allow centering within the flex container */
 }
-
 /* Reports (Prescriptions and Lab Reports) */
 .report-container {
   display: grid;
@@ -516,6 +515,15 @@ body {
   font-family: 'Courier New', monospace;
   white-space: pre-wrap;
   border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.summary-container p {
+  margin: 5px 0;
+}
+
+.summary-container strong {
+  font-weight: 700;
+  color: #2c3e50; /* Optional: Darker color for emphasis */
 }
 
 .summary-heading {

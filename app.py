@@ -1470,12 +1470,19 @@ def process_upload():
             'patient_name': patient_name,
             'summary': result['regional_summary'],
             'professional_summary': result['professional_summary'],
+            'english_patient_summary': result['english_patient_summary'],  # New field
             'language': result['language'],
             'timestamp': firestore.SERVER_TIMESTAMP
         })
         logger.info(f"Successfully stored summary for UID {uid} in category {category}")
 
-        return jsonify({'success': True, 'language': result['language']})
+        return jsonify({
+            'success': True,
+            'language': result['language'],
+            'regional_summary': result['regional_summary'],
+            'professional_summary': result['professional_summary'],
+            'english_patient_summary': result['english_patient_summary']  # Include in response
+        })
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500

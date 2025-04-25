@@ -251,15 +251,15 @@
           </div>
         `;
 
-        // Parse markdown summary using marked library
+        // Parse markdown summaries using marked library
         const regionalSummaryHTML = marked.parse(data.summary || 'No summary available');
-        const professionalSummaryHTML = marked.parse(data.professional_summary || 'No professional summary available');
+        const englishPatientSummaryHTML = marked.parse(data.english_patient_summary || 'No English patient summary available');
 
         prescriptionsHTML += `
           <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
             ${metadata}
             <div class="summary-container regional-summary">${regionalSummaryHTML}</div>
-            <div class="summary-container professional-summary" style="display: none;">${professionalSummaryHTML}</div>
+            <div class="summary-container english-patient-summary" style="display: none;">${englishPatientSummaryHTML}</div>
           </div>
         `;
         index++;
@@ -331,15 +331,15 @@
           </div>
         `;
 
-        // Parse markdown summary using marked library
+        // Parse markdown summaries using marked library
         const regionalSummaryHTML = marked.parse(data.summary || 'No summary available');
-        const professionalSummaryHTML = marked.parse(data.professional_summary || 'No professional summary available');
+        const englishPatientSummaryHTML = marked.parse(data.english_patient_summary || 'No English patient summary available');
 
         labRecordsHTML += `
           <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
             ${metadata}
             <div class="summary-container regional-summary">${regionalSummaryHTML}</div>
-            <div class="summary-container professional-summary" style="display: none;">${professionalSummaryHTML}</div>
+            <div class="summary-container english-patient-summary" style="display: none;">${englishPatientSummaryHTML}</div>
           </div>
         `;
         index++;
@@ -535,23 +535,24 @@
       let selectedFile = null;
       let selectedCategory = "prescriptions";
       let preferredLanguage = localStorage.getItem('preferredLanguage') || 'kannada'; // Default to Kannada
-      let displayLanguage = localStorage.getItem('displayLanguage') || 'regional'; // Default to regional
+      let displayMode = localStorage.getItem('displayMode') || 'regional'; // Default to regional (options: regional, english)
 
-      // Update toggle button text based on initial display language
-      elements.toggleLanguageBtn.textContent = displayLanguage === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
+      // Update toggle button text based on initial display mode
+      elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
 
       // Function to toggle summary display
       function toggleSummaries() {
         const cards = document.querySelectorAll('.report-card');
         cards.forEach(card => {
           const regionalSummary = card.querySelector('.regional-summary');
-          const professionalSummary = card.querySelector('.professional-summary');
-          if (displayLanguage === 'regional') {
+          const englishPatientSummary = card.querySelector('.english-patient-summary');
+          
+          if (displayMode === 'regional') {
             regionalSummary.style.display = 'block';
-            professionalSummary.style.display = 'none';
-          } else {
+            englishPatientSummary.style.display = 'none';
+          } else { // english
             regionalSummary.style.display = 'none';
-            professionalSummary.style.display = 'block';
+            englishPatientSummary.style.display = 'block';
           }
         });
       }
@@ -561,9 +562,9 @@
 
       // Language toggle button event listener
       elements.toggleLanguageBtn.addEventListener('click', async () => {
-        displayLanguage = displayLanguage === 'regional' ? 'english' : 'regional';
-        localStorage.setItem('displayLanguage', displayLanguage);
-        elements.toggleLanguageBtn.textContent = displayLanguage === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
+        displayMode = displayMode === 'regional' ? 'english' : 'regional';
+        localStorage.setItem('displayMode', displayMode);
+        elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
         toggleSummaries();
       });
 
