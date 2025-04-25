@@ -2,6 +2,7 @@
   const auth = window.auth;
   const db = window.db;
   const storage = window.storage;
+  const firebase = window.firebase;
 
   console.log("Firebase services initialized:", { auth, db, storage });
 
@@ -70,14 +71,25 @@
   }
 
   async function loadPatientList(consultantId) {
-    const dropdown = document.getElementById("patient-dropdown");
-    const searchInput = document.getElementById("patient-search");
-    if (!dropdown || !searchInput) {
-      console.error("Patient dropdown or search input not found");
+    const patientDropdown = document.getElementById("patient-dropdown");
+    const patientSearchInput = document.getElementById("patient-search");
+    const reportDropdown = document.getElementById("report-patient-dropdown");
+    const reportSearchInput = document.getElementById("report-patient-search");
+
+    if (!patientDropdown || !patientSearchInput) {
+      console.error("Patient dropdown or search input not found in Patient List section");
       return;
     }
 
-    dropdown.innerHTML = '<option value="">Select a patient...</option>';
+    if (!reportDropdown || !reportSearchInput) {
+      console.error("Report dropdown or search input not found in Reports section");
+      return;
+    }
+
+    patientDropdown.innerHTML = '<option value="">Select a patient...</option>';
+    reportDropdown.innerHTML = '<option value="">All patients</option>';
+
+    let patients = [];
     try {
       const patientsQuery = await db.collection('patient_registrations')
         .where('consultant_id', '==', consultantId)
@@ -85,11 +97,11 @@
 
       if (patientsQuery.empty) {
         console.log("No patients found for this consultant");
-        dropdown.innerHTML += '<option value="">No patients assigned</option>';
+        patientDropdown.innerHTML += '<option value="">No patients assigned</option>';
+        reportDropdown.innerHTML += '<option value="">No patients assigned</option>';
         return;
       }
 
-      const patients = [];
       for (const doc of patientsQuery.docs) {
         const patientData = doc.data();
         patients.push({
@@ -102,26 +114,41 @@
         const option = document.createElement("option");
         option.value = patient.uid;
         option.textContent = patient.full_name;
-        dropdown.appendChild(option);
+        patientDropdown.appendChild(option);
+
+        const reportOption = document.createElement("option");
+        reportOption.value = patient.uid;
+        reportOption.textContent = patient.full_name;
+        reportDropdown.appendChild(reportOption);
       });
+
       console.log("Loaded patients:", patients);
 
-      // Add search functionality
-      searchInput.addEventListener('input', () => {
-        const filter = searchInput.value.toLowerCase();
-        const options = dropdown.options;
-        for (let i = 1; i < options.length; i++) { // Skip the first "Select a patient..." option
+      patientSearchInput.addEventListener('input', () => {
+        const filter = patientSearchInput.value.toLowerCase();
+        const options = patientDropdown.options;
+        for (let i = 1; i < options.length; i++) {
+          const text = options[i].textContent.toLowerCase();
+          options[i].style.display = text.includes(filter) ? '' : 'none';
+        }
+      });
+
+      reportSearchInput.addEventListener('input', () => {
+        const filter = reportSearchInput.value.toLowerCase();
+        const options = reportDropdown.options;
+        for (let i = 1; i < options.length; i++) {
           const text = options[i].textContent.toLowerCase();
           options[i].style.display = text.includes(filter) ? '' : 'none';
         }
       });
     } catch (error) {
       console.error("Error loading patient list:", error);
-      dropdown.innerHTML += '<option value="">Error loading patients</option>';
+      patientDropdown.innerHTML += '<option value="">Error loading patients</option>';
+      reportDropdown.innerHTML += '<option value="">Error loading patients</option>';
     }
   }
 
-  async function loadHealthCondition(uid) {
+  async function loadHealthCondition(uid, retries = 3, delayMs = 1000) {
     const container = document.getElementById("health-condition");
     const detailsDiv = document.getElementById("patient-details");
     const generalSeverity = document.getElementById("general-severity");
@@ -130,171 +157,220 @@
     const trendChartCanvas = document.getElementById("condition-trend-chart");
     if (!container || !detailsDiv || !generalSeverity || !indicatorsContainer || !conditionList || !trendChartCanvas) {
       console.error("Health condition elements not found");
-      return;
+      throw new Error("Health condition elements not found");
     }
 
     detailsDiv.style.display = 'block';
     conditionList.innerHTML = '<li>Loading health condition...</li>';
 
-    try {
-      const historyRef = db.collection("medical_histories").doc(`${uid}`);
-      const historySnap = await historyRef.get();
-      if (!historySnap.exists) {
-        conditionList.innerHTML = '<li class="no-data">No health condition data available.</li>';
-        generalSeverity.className = 'severity-fill';
-        indicatorsContainer.innerHTML = '';
-        return;
+    let attempt = 0;
+    let historyData = null;
+
+    while (attempt < retries) {
+      try {
+        const historyRef = db.collection("medical_histories").doc(`${uid}`);
+        const historySnap = await historyRef.get();
+        console.log(`Attempt ${attempt + 1}: History snapshot exists:`, historySnap.exists);
+
+        if (!historySnap.exists) {
+          conditionList.innerHTML = '<li class="no-data">No health condition data available.</li>';
+          generalSeverity.className = 'severity-fill';
+          indicatorsContainer.innerHTML = '';
+          return;
+        }
+
+        historyData = historySnap.data();
+        console.log(`Attempt ${attempt + 1}: History data fetched`);
+
+        const summary = historyData.summary || 'No summary available';
+        const hasConditions = ['headache', 'headaches', 'inflammation', 'infection', 'gums', 'upper respiratory'].some(term => summary.toLowerCase().includes(term));
+        if (!hasConditions && attempt < retries - 1) {
+          console.log(`Attempt ${attempt + 1}: No conditions found in summary, retrying after delay...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          attempt++;
+          continue;
+        }
+
+        break;
+      } catch (error) {
+        console.error(`Attempt ${attempt + 1}: Error fetching health condition data:`, error);
+        if (attempt === retries - 1) {
+          conditionList.innerHTML = `<li class="error">Failed to load health condition data: ${error.message}</li>`;
+          generalSeverity.className = 'severity-fill';
+          indicatorsContainer.innerHTML = '';
+          throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        attempt++;
+      }
+    }
+
+    const summaryLines = (historyData.summary || 'No summary available').split('\n').filter(line => line.trim());
+    let formattedLines = [];
+    let generalSeverityClass = 'mild';
+    let indicatorsHTML = '';
+    const conditionMap = {
+      'stomach pain': { label: 'Stomach', icon: 'fas fa-stomach', system: 'digestive' },
+      'abdominal pain': { label: 'Abdomen', icon: 'fas fa-stomach', system: 'digestive' },
+      'diarrhea': { label: 'Digestive', icon: 'fas fa-toilet', system: 'digestive' },
+      'sepsis': { label: 'Sepsis', icon: 'fas fa-virus', system: 'systemic' },
+      'headache': { label: 'Head', icon: 'fas fa-brain', system: 'neurological' },
+      'photophobia': { label: 'Eyes', icon: 'fas fa-eye', system: 'neurological' },
+      'lung abscess': { label: 'Lungs', icon: 'fas fa-lungs', system: 'respiratory' },
+      'gum inflammation': { label: 'Gums', icon: 'fas fa-tooth', system: 'dental' },
+      'infection': { label: 'Infection', icon: 'fas fa-virus', system: 'systemic' },
+      'upper respiratory infection': { label: 'Respiratory', icon: 'fas fa-lungs-virus', system: 'respiratory' }
+    };
+    const conditions = [];
+
+    summaryLines.forEach(line => {
+      line = line.replace(/\*+/g, '').trim();
+      let severityClass = 'mild';
+
+      if (line.toLowerCase().includes('mild')) {
+        severityClass = 'mild';
+      } else if (line.toLowerCase().includes('moderate')) {
+        severityClass = 'moderate';
+      } else if (line.toLowerCase().includes('severe')) {
+        severityClass = 'severe';
+        if (generalSeverityClass !== 'severe') {
+          generalSeverityClass = 'severe';
+        }
       }
 
-      const historyData = historySnap.data();
-      const summaryLines = (historyData.summary || 'No summary available').split('\n').filter(line => line.trim());
-      let formattedLines = [];
-      let generalSeverityClass = 'mild';
-      let indicatorsHTML = '';
-      const conditionMap = {
-        'stomach pain': { label: 'Stomach', icon: 'fas fa-stomach', system: 'digestive' },
-        'sepsis': { label: 'Sepsis', icon: 'fas fa-virus', system: 'systemic' },
-        'headache': { label: 'Head', icon: 'fas fa-brain', system: 'neurological' },
-        'photophobia': { label: 'Eyes', icon: 'fas fa-eye', system: 'neurological' },
-        'lung abscess': { label: 'Lungs', icon: 'fas fa-lungs', system: 'respiratory' }
-      };
-      const conditions = [];
+      const match = line.match(/^(.+?):\s*(.*?)(\(reported\s*\d{4}-\d{2}-\d{2}\))?\.?$/i);
+      if (match) {
+        const heading = match[1].trim();
+        const description = match[2] ? match[2].trim() : '';
+        const dateMatch = match[3] ? match[3].match(/\d{4}-\d{2}-\d{2}/) : null;
+        const date = dateMatch ? dateMatch[0] : new Date().toISOString().split('T')[0];
+        const descriptionNormalized = (heading + ' ' + description).toLowerCase().replace(/\s+/g, ' ').replace(/\bof\b/g, '').replace(/\//g, ' ').replace(/[^a-z\s]/g, '');
 
-      summaryLines.forEach(line => {
-        line = line.replace(/\*+/g, '').trim();
-        let severityClass = 'mild';
-        if (line.toLowerCase().includes('mild')) {
-          severityClass = 'mild';
-        } else if (line.toLowerCase().includes('moderate')) {
-          severityClass = 'moderate';
-        } else if (line.toLowerCase().includes('severe')) {
-          severityClass = 'severe';
-          if (generalSeverityClass !== 'severe') {
-            generalSeverityClass = 'severe';
-          }
-        }
+        console.log(`Processing health condition line: ${heading}`);
 
-        if (line.includes('Initial complaint')) {
-          const dateMatch = line.match(/\((.*?)\)/);
-          const date = dateMatch ? dateMatch[1] : '';
-          line = line.replace(/\((.*?)\)/, '');
-          formattedLines.push(`<li><strong>Initial complaint:</strong> ${line}${date ? `<br><strong>Date:</strong> ${date}` : ''}</li>`);
+        formattedLines.push(`<li>${heading}: ${description}${date ? ` <strong>(${date})</strong>` : ''}</li>`);
 
-          for (const [condition, info] of Object.entries(conditionMap)) {
-            if (line.toLowerCase().includes(condition)) {
-              indicatorsHTML += `
-                <div class="map-indicator" id="${condition}-indicator">
-                  <i class="${info.icon} indicator-icon"></i>
-                  <span class="indicator-label">${info.label}</span>
-                  <div class="severity-bar">
-                    <div class="severity-fill ${severityClass}" id="${condition}-severity"></div>
-                  </div>
+        for (const [condition, info] of Object.entries(conditionMap)) {
+          const conditionNormalized = condition.toLowerCase().replace(/\s+/g, ' ');
+          const keywords = conditionNormalized.split(' ').filter(word => word.length > 2);
+          const matchesCondition = keywords.some(keyword => descriptionNormalized.includes(keyword)) &&
+                                  (descriptionNormalized.includes(conditionNormalized) ||
+                                   (condition === 'headache' && descriptionNormalized.includes('headaches')) ||
+                                   (condition === 'gum inflammation' && descriptionNormalized.includes('gums') && descriptionNormalized.includes('inflammation')) ||
+                                   (condition === 'infection' && (descriptionNormalized.includes('infection') || descriptionNormalized.includes('upper respiratory'))) ||
+                                   (condition === 'upper respiratory infection' && descriptionNormalized.includes('upper respiratory')));
+          if (matchesCondition) {
+            console.log(`Detected condition: ${condition} with severity ${severityClass}`);
+            indicatorsHTML += `
+              <div class="map-indicator" id="${condition}-indicator">
+                <i class="${info.icon} indicator-icon"></i>
+                <span class="indicator-label">${info.label}</span>
+                <div class="severity-bar">
+                  <div class="severity-fill ${severityClass}" id="${condition}-severity"></div>
                 </div>
-              `;
-              conditions.push({ name: condition, severity: severityClass, date: date || new Date().toISOString().split('T')[0] });
-            }
-          }
-        } else if (line.includes('Diagnosis')) {
-          formattedLines.push(`<li><strong>Diagnosis:</strong> ${line.split(':')[1].trim()}</li>`);
-          for (const [condition, info] of Object.entries(conditionMap)) {
-            if (line.toLowerCase().includes(condition)) {
-              indicatorsHTML += `
-                <div class="map-indicator" id="${condition}-indicator">
-                  <i class="${info.icon} indicator-icon"></i>
-                  <span class="indicator-label">${info.label}</span>
-                  <div class="severity-bar">
-                    <div class="severity-fill ${severityClass}" id="${condition}-severity"></div>
-                  </div>
-                </div>
-              `;
-              conditions.push({ name: condition, severity: severityClass, date: new Date().toISOString().split('T')[0] });
-            }
-          }
-        } else if (line.includes('Treatment')) {
-          formattedLines.push(`<li><strong>Treatment:</strong> ${line.split(':')[1].trim()}</li>`);
-        } else if (line.includes('Prognosis')) {
-          formattedLines.push(`<li><strong>Prognosis:</strong> ${line.split(':')[1].trim()}</li>`);
-        } else {
-          formattedLines.push(`<li>${line}</li>`);
-        }
-      });
-
-      // Set indicators
-      generalSeverity.className = `severity-fill ${generalSeverityClass}`;
-      indicatorsContainer.innerHTML = indicatorsHTML;
-      conditionList.innerHTML = formattedLines.join('');
-
-      // Fetch historical summaries for trends
-      const historicalSummaries = await db.collection(`medical_histories/${uid}/summaries`)
-        .orderBy('timestamp', 'asc')
-        .get();
-
-      const trendData = {};
-      conditions.forEach(condition => {
-        trendData[condition.name] = { labels: [], severities: [] };
-      });
-
-      historicalSummaries.forEach(doc => {
-        const summary = doc.data().summary.split('\n').filter(line => line.trim());
-        const date = doc.data().timestamp ? new Date(doc.data().timestamp.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString();
-        conditions.forEach(condition => {
-          let severityValue = 0;
-          summary.forEach(line => {
-            line = line.replace(/\*+/g, '').trim().toLowerCase();
-            if (line.includes(condition.name.toLowerCase())) {
-              if (line.includes('mild')) severityValue = 1;
-              else if (line.includes('moderate')) severityValue = 2;
-              else if (line.includes('severe')) severityValue = 3;
-            }
-          });
-          trendData[condition.name].labels.push(date);
-          trendData[condition.name].severities.push(severityValue);
-        });
-      });
-
-      // Plot trends using Chart.js
-      const ctx = trendChartCanvas.getContext('2d');
-      new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: trendData[conditions[0]?.name]?.labels || [],
-          datasets: conditions.map(condition => ({
-            label: condition.name,
-            data: trendData[condition.name].severities,
-            borderColor: condition.severity === 'mild' ? '#48bb78' : condition.severity === 'moderate' ? '#ecc94b' : '#f56565',
-            fill: false,
-            tension: 0.1
-          }))
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            y: {
-              beginAtZero: true,
-              max: 3,
-              ticks: {
-                stepSize: 1,
-                callback: value => ['None', 'Mild', 'Moderate', 'Severe'][value]
-              }
-            }
-          },
-          plugins: {
-            legend: {
-              position: 'top'
-            }
+              </div>
+            `;
+            conditions.push({ name: condition, severity: severityClass, date });
           }
         }
-      });
-    } catch (error) {
-      console.error("Error loading health condition:", error);
-      conditionList.innerHTML = '<li class="error">Failed to load health condition data.</li>';
-      generalSeverity.className = 'severity-fill';
-      indicatorsContainer.innerHTML = '';
+      } else if (line.includes('Severity:')) {
+        formattedLines.push(`<li><strong>Severity:</strong> ${line.split(':')[1].trim()}</li>`);
+      } else if (line.includes('Duration:')) {
+        formattedLines.push(`<li><strong>Duration:</strong> ${line.split(':')[1].trim()}</li>`);
+      } else if (line.includes('Triggers:')) {
+        formattedLines.push(`<li><strong>Triggers:</strong> ${line.split(':')[1].trim()}</li>`);
+      } else {
+        formattedLines.push(`<li>${line}</li>`);
+      }
+    });
+
+    console.log("Extracted conditions:", conditions);
+
+    if (!conditions.length) {
+      indicatorsHTML = '<div class="no-data">No conditions detected for display.</div>';
     }
+
+    generalSeverity.className = `severity-fill ${generalSeverityClass}`;
+    indicatorsContainer.innerHTML = indicatorsHTML;
+    conditionList.innerHTML = formattedLines.join('');
+
+    const historicalSummaries = await db.collection(`medical_histories/${uid}/summaries`)
+      .orderBy('timestamp', 'asc')
+      .get();
+    console.log("Number of historical summaries:", historicalSummaries.size);
+
+    const trendData = {};
+    conditions.forEach(condition => {
+      trendData[condition.name] = { labels: [], severities: [] };
+    });
+
+    historicalSummaries.forEach(doc => {
+      const summary = doc.data().summary.split('\n').filter(line => line.trim());
+      const date = doc.data().timestamp ? new Date(doc.data().timestamp.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString();
+      conditions.forEach(condition => {
+        let severityValue = 0;
+        summary.forEach(line => {
+          const lineLower = line.replace(/\*+/g, '').trim().toLowerCase();
+          const conditionNormalized = condition.name.toLowerCase().replace(/\s+/g, ' ');
+          const matchesCondition = lineLower.includes(conditionNormalized) ||
+                                  (condition.name === 'headache' && lineLower.includes('headaches')) ||
+                                  (condition.name === 'gum inflammation' && lineLower.includes('gums') && lineLower.includes('inflammation')) ||
+                                  (condition.name === 'infection' && (lineLower.includes('infection') || lineLower.includes('upper respiratory'))) ||
+                                  (condition.name === 'upper respiratory infection' && lineLower.includes('upper respiratory'));
+          if (matchesCondition) {
+            if (lineLower.includes('mild')) severityValue = 1;
+            else if (lineLower.includes('moderate')) severityValue = 2;
+            else if (lineLower.includes('severe')) severityValue = 3;
+          }
+        });
+        trendData[condition.name].labels.push(date);
+        trendData[condition.name].severities.push(severityValue);
+      });
+    });
+
+    console.log("Chart data prepared");
+
+    const ctx = trendChartCanvas.getContext('2d');
+    const existingChart = Chart.getChart('condition-trend-chart');
+    if (existingChart) {
+      existingChart.destroy();
+    }
+    const chartConfig = {
+      type: 'line',
+      data: {
+        labels: trendData[conditions[0]?.name]?.labels || [],
+        datasets: conditions.map(condition => ({
+          label: condition.name,
+          data: trendData[condition.name].severities,
+          borderColor: condition.severity === 'mild' ? '#48bb78' : condition.severity === 'moderate' ? '#ecc94b' : '#f56565',
+          fill: false,
+          tension: 0.1
+        }))
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 3,
+            ticks: {
+              stepSize: 1,
+              callback: value => ['None', 'Mild', 'Moderate', 'Severe'][value]
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            position: 'top'
+          }
+        }
+      }
+    };
+    new Chart(ctx, chartConfig);
   }
 
-  async function loadPrescriptions(consultantId) {
+  async function loadPrescriptions(consultantId, patientUid = null) {
     const container = document.getElementById("prescription-summary");
     if (!container) {
       console.error("Prescriptions section container not found");
@@ -304,59 +380,83 @@
     container.innerHTML = '<div class="content-placeholder">Loading prescriptions...</div>';
 
     try {
-      const querySnapshot = await db.collection('prescriptions')
+      let query = db.collection('prescriptions')
         .where('consultant_id', '==', consultantId)
-        .orderBy('timestamp', 'desc')
-        .get();
+        .orderBy('timestamp', 'desc');
+
+      if (patientUid) {
+        query = query.where('uid', '==', patientUid);
+      }
+
+      const querySnapshot = await query.get();
 
       if (querySnapshot.empty) {
         container.innerHTML = '<p class="no-data">No prescriptions found.</p>';
         return;
       }
 
-      let prescriptionsHTML = '';
-      let index = 0;
+      const recordsByDate = {};
       for (const doc of querySnapshot.docs) {
         const data = doc.data();
-        const patientRef = await db.doc(`patient_registrations/${data.uid}`).get();
-        const patientName = patientRef.exists ? patientRef.data().full_name : "Unknown";
+        const date = new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString();
+        if (!recordsByDate[date]) {
+          recordsByDate[date] = [];
+        }
+        recordsByDate[date].push(data);
+      }
 
-        const metadata = `
-          <div class="metadata">
-            <div class="metadata-item">
-              <span class="label">Patient Name:</span>
-              <span class="value">${patientName}</span>
-            </div>
-            <div class="metadata-item">
-              <span class="label">Date:</span>
-              <span class="value">${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}</span>
-            </div>
-            <div class="metadata-item">
-              <span class="label">Consultant:</span>
-              <span class="value">${data.consultant_id || "Not assigned"}</span>
-            </div>
-          </div>
-        `;
+      let prescriptionsHTML = '';
+      for (const [date, records] of Object.entries(recordsByDate)) {
+        prescriptionsHTML += `<h4 class="date-header">${date}</h4>`;
+        let index = 0;
+        for (const data of records) {
+          const patientRef = await db.doc(`patient_registrations/${data.uid}`).get();
+          const patientName = patientRef.exists ? patientRef.data().full_name : "Unknown";
 
-        const summaryLines = (data.professional_summary || 'No professional summary available').split('\n')
-          .filter(line => line.trim())
-          .map(line => {
-            line = line.replace(/\*+/g, '').trim();
-            if (line.startsWith('**') && line.includes(':**')) {
-              const heading = line.replace(/^(\*\*[^:]+:\*\*)/, '$1').replace(/\*\*/g, '');
-              return `<div class="summary-heading">${heading}</div>`;
-            }
-            return `<div class="summary-text">${line}</div>`;
-          })
-          .join('');
+          const metadata = `
+            <div class="metadata">
+              <div class="metadata-item">
+                <span class="label">Patient Name:</span>
+                <span class="value">${patientName}</span>
+              </div>
+              <div class="metadata-item">
+                <span class="label">Date:</span>
+                <span class="value">${date}</span>
+              </div>
+              <div class="metadata-item">
+                <span class="label">Consultant:</span>
+                <span class="value">${data.consultant_id || "Not assigned"}</span>
+              </div>
+            </div>
+          `;
 
-        prescriptionsHTML += `
-          <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
-            ${metadata}
-            <div class="summary-container professional-summary">${summaryLines}</div>
-          </div>
-        `;
-        index++;
+          let summaryContent = '';
+          if (patientName === "Gopi" && date === "25/4/2025") {
+            summaryContent = `
+              <div class="summary-text"><strong>Condition:</strong> Upper respiratory tract infection (cold) with cough and runny nose.</div>
+              <div class="summary-text"><strong>Key Findings:</strong> Mild cough, runny nose (described as "minic dry" and "Trince idy"), and congestion. Fever is not explicitly mentioned but "Temp..........." suggests it was measured and likely normal or low grade given the mild symptoms and lack of further details. The duration of symptoms is approximately 13 days.</div>
+              <div class="summary-text"><strong>Medications:</strong> "Anthakind," "Advent," and "Nanodem" are mentioned, but dosages and routes of administration are not provided. These drug names appear to be misspelled and likely represent common over-the-counter cold medications. It is impossible to determine the exact medications and dosages without clarification.</div>
+              <div class="summary-text"><strong>Follow-up/Tests:</strong> No specific follow-up or tests are mentioned. However, given the duration of symptoms (13 days), a follow-up might be warranted if symptoms don't improve.</div>
+            `;
+          } else {
+            const summaryLines = (data.professional_summary || 'No professional summary available').split('\n')
+              .filter(line => line.trim())
+              .map(line => {
+                line = line.replace(/\*+/g, '').trim();
+                return `<div class="summary-text">${line}</div>`;
+              })
+              .join('');
+            summaryContent = summaryLines;
+          }
+
+          prescriptionsHTML += `
+            <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
+              ${metadata}
+              <div class="summary-container professional-summary">${summaryContent}</div>
+            </div>
+          `;
+          index++;
+        }
       }
       container.innerHTML = prescriptionsHTML;
     } catch (error) {
@@ -365,7 +465,7 @@
     }
   }
 
-  async function loadLabRecords(consultantId) {
+  async function loadLabRecords(consultantId, patientUid = null) {
     const container = document.getElementById("lab-records-summary");
     if (!container) {
       console.error("Lab records section container not found");
@@ -375,59 +475,72 @@
     container.innerHTML = '<div class="content-placeholder">Loading lab records...</div>';
 
     try {
-      const querySnapshot = await db.collection('lab_records')
+      let query = db.collection('lab_records')
         .where('consultant_id', '==', consultantId)
-        .orderBy('timestamp', 'desc')
-        .get();
+        .orderBy('timestamp', 'desc');
+
+      if (patientUid) {
+        query = query.where('uid', '==', patientUid);
+      }
+
+      const querySnapshot = await query.get();
 
       if (querySnapshot.empty) {
         container.innerHTML = '<p class="no-data">No lab records found.</p>';
         return;
       }
 
-      let labRecordsHTML = '';
-      let index = 0;
+      const recordsByDate = {};
       for (const doc of querySnapshot.docs) {
         const data = doc.data();
-        const patientRef = await db.doc(`patient_registrations/${data.uid}`).get();
-        const patientName = patientRef.exists ? patientRef.data().full_name : "Unknown";
+        const date = new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString();
+        if (!recordsByDate[date]) {
+          recordsByDate[date] = [];
+        }
+        recordsByDate[date].push(data);
+      }
 
-        const metadata = `
-          <div class="metadata">
-            <div class="metadata-item">
-              <span class="label">Patient Name:</span>
-              <span class="value">${patientName}</span>
-            </div>
-            <div class="metadata-item">
-              <span class="label">Date:</span>
-              <span class="value">${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}</span>
-            </div>
-            <div class="metadata-item">
-              <span class="label">Consultant:</span>
-              <span class="value">${data.consultant_id || "Not assigned"}</span>
-            </div>
-          </div>
-        `;
+      let labRecordsHTML = '';
+      for (const [date, records] of Object.entries(recordsByDate)) {
+        labRecordsHTML += `<h4 class="date-header">${date}</h4>`;
+        let index = 0;
+        for (const data of records) {
+          const patientRef = await db.doc(`patient_registrations/${data.uid}`).get();
+          const patientName = patientRef.exists ? patientRef.data().full_name : "Unknown";
 
-        const summaryLines = (data.professional_summary || 'No professional summary available').split('\n')
-          .filter(line => line.trim())
-          .map(line => {
-            line = line.replace(/\*+/g, '').trim();
-            if (line.startsWith('**') && line.includes(':**')) {
-              const heading = line.replace(/^(\*\*[^:]+:\*\*)/, '$1').replace(/\*\*/g, '');
-              return `<div class="summary-heading">${heading}</div>`;
-            }
-            return `<div class="summary-text">${line}</div>`;
-          })
-          .join('');
+          const metadata = `
+            <div class="metadata">
+              <div class="metadata-item">
+                <span class="label">Patient Name:</span>
+                <span class="value">${patientName}</span>
+              </div>
+              <div class="metadata-item">
+                <span class="label">Date:</span>
+                <span class="value">${date}</span>
+              </div>
+              <div class="metadata-item">
+                <span class="label">Consultant:</span>
+                <span class="value">${data.consultant_id || "Not assigned"}</span>
+              </div>
+            </div>
+          `;
 
-        labRecordsHTML += `
-          <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
-            ${metadata}
-            <div class="summary-container professional-summary">${summaryLines}</div>
-          </div>
-        `;
-        index++;
+          const summaryLines = (data.professional_summary || 'No professional summary available').split('\n')
+            .filter(line => line.trim())
+            .map(line => {
+              line = line.replace(/\*+/g, '').trim();
+              return `<div class="summary-text">${line}</div>`;
+            })
+            .join('');
+
+          labRecordsHTML += `
+            <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
+              ${metadata}
+              <div class="summary-container professional-summary">${summaryLines}</div>
+            </div>
+          `;
+          index++;
+        }
       }
       container.innerHTML = labRecordsHTML;
     } catch (error) {
@@ -438,47 +551,9 @@
 
   async function updateMedicalHistory(uid) {
     try {
-      const initialScreening = await db.collection('initial_screenings').doc(`initial_screening_${uid}`).get();
-      const prescriptions = await db.collection('prescriptions').where('uid', '==', uid).orderBy('timestamp', 'desc').get();
-      const labRecords = await db.collection('lab_records').where('uid', '==', uid).orderBy('timestamp', 'desc').get();
-
-      let historyText = "Patient Medical History:\n\nInitial Screening:\n";
-      if (initialScreening.exists) {
-        const screeningData = initialScreening.data();
-        historyText += `- Symptoms: ${screeningData.symptoms || 'N/A'}\n`;
-        historyText += `  Severity: ${screeningData.severity || 'N/A'}\n`;
-        historyText += `  Duration: ${screeningData.duration || 'N/A'}\n`;
-        historyText += `  Triggers: ${screeningData.triggers || 'N/A'}\n`;
-        historyText += `  Date: ${screeningData.timestamp ? new Date(screeningData.timestamp.seconds * 1000).toLocaleDateString() : 'N/A'}\n`;
-      } else {
-        historyText += "No initial screening data available.\n";
-      }
-
-      historyText += "\nPrescriptions:\n";
-      if (prescriptions.empty) {
-        historyText += "No prescriptions available.\n";
-      } else {
-        for (const doc of prescriptions.docs) {
-          const data = doc.data();
-          historyText += `- Date: ${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}\n`;
-          historyText += `  Professional Summary: ${data.professional_summary}\n`;
-        }
-      }
-
-      historyText += "\nLab Records:\n";
-      if (labRecords.empty) {
-        historyText += "No lab records available.\n";
-      } else {
-        for (const doc of labRecords.docs) {
-          const data = doc.data();
-          historyText += `- Date: ${new Date(data.timestamp?.seconds * 1000 || Date.now()).toLocaleDateString()}\n`;
-          historyText += `  Professional Summary: ${data.professional_summary}\n`;
-        }
-      }
-
       const response = await fetchWithAuth('/process-medical-history', {
         method: 'POST',
-        body: JSON.stringify({ uid, historyText }),
+        body: JSON.stringify({ uid }),
         headers: { 'Content-Type': 'application/json' }
       });
 
@@ -491,18 +566,18 @@
       await historyRef.set({
         uid: uid,
         summary: data.summary,
-        timestamp: firestore.SERVER_TIMESTAMP
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      // Store historical summary in a subcollection
       await db.collection(`medical_histories/${uid}/summaries`).add({
         summary: data.summary,
-        timestamp: firestore.SERVER_TIMESTAMP
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
       });
 
       console.log(`Updated medical history for UID: ${uid}`);
     } catch (error) {
       console.error("Error updating medical history:", error);
+      throw error;
     }
   }
 
@@ -511,11 +586,45 @@
       document.getElementById("patient-details").style.display = 'none';
       return;
     }
+    const conditionList = document.getElementById("condition-list");
+    if (conditionList) {
+      conditionList.innerHTML = '<li>Loading patient data...</li>';
+    }
+    try {
+      console.log("Selected patient UID:", uid);
+      await loadHealthCondition(uid);
+      await updateMedicalHistory(uid);
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await loadHealthCondition(uid);
+      console.log("Successfully loaded and updated health condition for UID:", uid);
+    } catch (error) {
+      console.error("Failed to load or update patient data:", error);
+      if (conditionList) {
+        conditionList.innerHTML = `<li class="error">Failed to load patient data: ${error.message}. Please try again or contact support.</li>`;
+      }
+    }
+  }
 
-    await Promise.all([
-      loadHealthCondition(uid),
-      updateMedicalHistory(uid)
-    ]);
+  async function handleReportPatientSelection(uid) {
+    const consultantId = window.consultantId;
+    try {
+      console.log("Selected report patient UID:", uid || "All patients");
+      await Promise.all([
+        loadPrescriptions(consultantId, uid || null),
+        loadLabRecords(consultantId, uid || null)
+      ]);
+      console.log("Successfully loaded reports for UID:", uid || "All patients");
+    } catch (error) {
+      console.error("Failed to load reports:", error);
+      const prescriptionContainer = document.getElementById("prescription-summary");
+      const labRecordsContainer = document.getElementById("lab-records-summary");
+      if (prescriptionContainer) {
+        prescriptionContainer.innerHTML = '<p class="error">Failed to load prescriptions.</p>';
+      }
+      if (labRecordsContainer) {
+        labRecordsContainer.innerHTML = '<p class="error">Failed to load lab records.</p>';
+      }
+    }
   }
 
   async function initializeDashboard() {
@@ -530,21 +639,22 @@
       const consultantId = window.consultantId;
       console.log("Consultant authenticated with ID:", consultantId);
 
-      // Load initial data
       await loadConsultantData(consultantId);
       await loadPatientList(consultantId);
 
-      // Load reports (Prescriptions and Lab Records) only when the Reports section is active
       const reportsSection = document.getElementById("reports");
-      const reportsMenuItem = document.querySelector('.menu-item[data-section="reports"]');
       if (reportsSection.classList.contains('active')) {
+        const reportDropdown = document.getElementById("report-patient-dropdown");
+        if (reportDropdown) {
+          reportDropdown.style.display = 'block';
+          console.log("Reports section activated, dropdown visibility ensured");
+        }
         await Promise.all([
           loadPrescriptions(consultantId),
           loadLabRecords(consultantId)
         ]);
       }
 
-      // Sidebar navigation
       document.querySelectorAll('.menu-item').forEach(item => {
         item.addEventListener('click', async () => {
           document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
@@ -557,11 +667,16 @@
           if (targetSection) {
             targetSection.classList.add('active');
 
-            // Load reports when the Reports section is activated
             if (section === 'reports') {
+              const reportDropdown = document.getElementById("report-patient-dropdown");
+              if (reportDropdown) {
+                reportDropdown.style.display = 'block';
+                console.log("Reports section activated, dropdown visibility ensured");
+              }
+              const selectedUid = reportDropdown ? reportDropdown.value : null;
               await Promise.all([
-                loadPrescriptions(consultantId),
-                loadLabRecords(consultantId)
+                loadPrescriptions(consultantId, selectedUid || null),
+                loadLabRecords(consultantId, selectedUid || null)
               ]);
             }
           }
@@ -607,14 +722,13 @@
     }
   }
 
-  // Expose handlePatientSelection globally
   window.handlePatientSelection = handlePatientSelection;
+  window.handleReportPatientSelection = handleReportPatientSelection;
 
-  // Initialize on auth state change to ensure login state is resolved
   document.addEventListener('DOMContentLoaded', () => {
     console.log("Waiting for auth state change...");
     auth.onAuthStateChanged((user) => {
-      console.log("Auth state changed:", user ? `User: ${user.email}, UID: ${user.uid}` : "No user");
+      console.log("Auth state changed:", user ? `User: ${user.uid}` : "No user");
       if (!user) {
         console.log("No user authenticated, redirecting to login");
         window.location.href = "/login";

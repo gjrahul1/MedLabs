@@ -52,7 +52,7 @@
       console.log("Patient data fetched from Firestore:", patientData);
 
       const patientIdElement = document.getElementById("patient-id");
-      const nextVisitElement = document.getElementById("next-visit");
+      const nextVisitElement = document.getElementById("patient-id");
       const consultantNameElement = document.getElementById("consultant-name");
       const headerTitle = document.querySelector(".dashboard-header h1");
 
@@ -86,10 +86,8 @@
             })
         : "No Consultant Assigned";
 
-      // Update header with greeting and patient name
       headerTitle.textContent = `${getGreeting()}, ${patientData.full_name || 'Patient'}!`;
 
-      // Show notification if no consultant is assigned
       if (!patientData.consultant_id) {
         document.getElementById("doctor-notification").style.display = "block";
       }
@@ -125,7 +123,6 @@
       const data = screeningDoc.data();
       console.log("Initial screening data fetched:", data);
   
-      // Format array fields for display
       const symptomsList = Array.isArray(data.symptoms) ? data.symptoms.join(", ") : data.symptoms || 'N/A';
       const severityList = Array.isArray(data.severity) ? data.severity : [data.severity || 'Unknown'];
       const severityBadges = severityList.map(severity => `
@@ -134,7 +131,6 @@
       const durationList = Array.isArray(data.duration) ? data.duration.join(", ") : data.duration || 'N/A';
       const triggersList = Array.isArray(data.triggers) ? data.triggers.join(", ") : data.triggers || 'N/A';
   
-      // Fetch consultant name if consultant_id exists
       let consultantName = "Not Assigned";
       if (data.consultant_id) {
         try {
@@ -182,7 +178,6 @@
   
       container.innerHTML = screeningHTML;
   
-      // Add fade-in animation to screening cards
       container.querySelectorAll('.screening-card').forEach((card, index) => {
         card.style.animation = `fadeIn 0.5s ease-in-out ${index * 0.1}s forwards`;
       });
@@ -227,7 +222,7 @@
       `;
       let index = 0;
       for (const doc of querySnapshot.docs) {
-        const data = doc.data();
+        const data = doc.to_dict ? doc.to_dict() : doc.data();
         const consultantName = data.consultant_id
           ? await db.doc(`consultant_registrations/${data.consultant_id}`).get()
               .then(snap => snap.exists ? snap.data().full_name : "Unknown")
@@ -251,9 +246,95 @@
           </div>
         `;
 
-        // Parse markdown summaries using marked library
-        const regionalSummaryHTML = marked.parse(data.summary || 'No summary available');
+        marked.setOptions({
+          breaks: true,
+          langPrefix: 'language-'
+        });
+
+        let regionalSummary = data.summary || 'No summary available';
+        console.log(`Before removing markers for UID ${uid}:`, regionalSummary);
+
+        // Remove "```markdown" or "```" markers using a more robust approach
+        regionalSummary = regionalSummary.replace(/^(?:\s*```markdown\s*[\r\n]*|```[\r\n]*)([\s\S]*?)(?:[\r\n]*```)$/gi, '$1').trim();
+
+        console.log(`After removing markers for UID ${uid}:`, regionalSummary);
+
+        // Split the summary into lines and ensure bullet points are formatted correctly
+        let lines = regionalSummary.split('\n').map(line => line.trim());
+        let formattedLines = [];
+        let inList = false;
+        for (let i = 0; i < lines.length; i++) {
+          let line = lines[i];
+          // Skip empty lines
+          if (!line) {
+            formattedLines.push(line);
+            continue;
+          }
+          // Skip lines that are just "```" or "```markdown"
+          if (line.match(/^```(?:markdown)?$/i)) {
+            continue;
+          }
+          // Preserve greeting and introduction lines
+          if (line.startsWith('Dear') || line.match(/^ಪ್ರೀತಿಯ/) || line.match(/^உங்கள்/) || line.match(/^ನಿಮ್ಮ/) || line.match(/^Here's a summary/)) {
+            formattedLines.push(line);
+            continue;
+          }
+          // Detect potential bullet points (e.g., lines with bolded text followed by a sentence)
+          if (!line.startsWith('-') && line.match(/\*\*.*?\*\*/)) {
+            line = `- ${line}`;
+            inList = true;
+          } else if (line.startsWith('-')) {
+            inList = true;
+          } else if (inList) {
+            // If we're in a list and the line doesn't start with '-', end the list
+            inList = false;
+          }
+          formattedLines.push(line);
+        }
+        regionalSummary = formattedLines.join('\n').trim();
+
+        console.log(`After formatting bullet points for UID ${uid}:`, regionalSummary);
+
+        let regionalSummaryHTML = marked.parse(regionalSummary);
         const englishPatientSummaryHTML = marked.parse(data.english_patient_summary || 'No English patient summary available');
+
+        console.log(`Raw regional summary for UID ${uid}:`, regionalSummary);
+        console.log(`Parsed regional summary for UID ${uid}:`, regionalSummaryHTML);
+        console.log(`Parsed English patient summary for UID ${uid}:`, englishPatientSummaryHTML);
+
+        if (!regionalSummaryHTML.includes('<ul>') && regionalSummary.includes('-')) {
+          console.warn("Markdown parsing failed for regional summary, applying fallback formatting");
+          const lines = regionalSummary.split('\n').filter(line => line.trim());
+          let formattedHTML = '';
+          let inList = false;
+          for (const line of lines) {
+            // Skip lines that are just "```" or "```markdown"
+            if (line.match(/^```(?:markdown)?$/i)) {
+              continue;
+            }
+            if (line.startsWith('Dear') || line.match(/^ಪ್ರೀತಿಯ/) || line.match(/^உங்கள்/) || line.match(/^ನಿಮ್ಮ/) || line.match(/^Here's a summary/)) {
+              formattedHTML += `<p>${line}</p>`;
+            } else if (line.startsWith('-')) {
+              if (!inList) {
+                formattedHTML += '<ul>';
+                inList = true;
+              }
+              const formattedLine = line.replace(/^-+\s*/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+              formattedHTML += `<li>${formattedLine}</li>`;
+            } else {
+              if (inList) {
+                formattedHTML += '</ul>';
+                inList = false;
+              }
+              formattedHTML += `<p>${line}</p>`;
+            }
+          }
+          if (inList) {
+            formattedHTML += '</ul>';
+          }
+          regionalSummaryHTML = formattedHTML;
+          console.log(`Fallback regional summary HTML for UID ${uid}:`, regionalSummaryHTML);
+        }
 
         prescriptionsHTML += `
           <div class="report-card" data-language="${data.language || 'english'}" style="animation: fadeIn 0.5s ease-in-out ${index * 0.1}s forwards;">
@@ -307,7 +388,7 @@
       `;
       let index = 0;
       for (const doc of querySnapshot.docs) {
-        const data = doc.data();
+        const data = doc.to_dict ? doc.to_dict() : doc.data();
         const consultantName = data.consultant_id
           ? await db.doc(`consultant_registrations/${data.consultant_id}`).get()
               .then(snap => snap.exists ? snap.data().full_name : "Unknown")
@@ -331,8 +412,10 @@
           </div>
         `;
 
-        // Parse markdown summaries using marked library
-        const regionalSummaryHTML = marked.parse(data.summary || 'No summary available');
+        let regionalSummary = data.summary || 'No summary available';
+        regionalSummary = regionalSummary.replace(/^(?:\s*```markdown\s*[\r\n]*|```[\r\n]*)([\s\S]*?)(?:[\r\n]*```)$/gi, '$1').trim();
+
+        const regionalSummaryHTML = marked.parse(regionalSummary);
         const englishPatientSummaryHTML = marked.parse(data.english_patient_summary || 'No English patient summary available');
 
         labRecordsHTML += `
@@ -441,10 +524,8 @@
         throw new Error(`Server returned ${response.status}: ${data.error || 'Unknown error'}`);
       }
       if (data.success) {
-        // Update preferred language in local storage
         localStorage.setItem('preferredLanguage', languageText);
         alert(`${category === 'prescriptions' ? 'Prescription' : 'Lab Record'} processed successfully!`);
-        // Reload summaries to reflect the new language
         category === "prescriptions" ? await loadPrescriptions(uid) : await loadLabRecords(uid);
       } else {
         throw new Error(data.error || "Processing failed");
@@ -468,7 +549,6 @@
       const uid = user.uid;
       console.log("User authenticated with UID:", uid);
 
-      // Check for registration prompt
       const patientRef = db.doc(`patient_registrations/${uid}`);
       const patientSnap = await patientRef.get();
       if (patientSnap.exists && !patientSnap.data().consultant_id) {
@@ -534,13 +614,11 @@
 
       let selectedFile = null;
       let selectedCategory = "prescriptions";
-      let preferredLanguage = localStorage.getItem('preferredLanguage') || 'kannada'; // Default to Kannada
-      let displayMode = localStorage.getItem('displayMode') || 'regional'; // Default to regional (options: regional, english)
+      let preferredLanguage = localStorage.getItem('preferredLanguage') || 'kannada';
+      let displayMode = localStorage.getItem('displayMode') || 'regional';
 
-      // Update toggle button text based on initial display mode
       elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
 
-      // Function to toggle summary display
       function toggleSummaries() {
         const cards = document.querySelectorAll('.report-card');
         cards.forEach(card => {
@@ -550,17 +628,15 @@
           if (displayMode === 'regional') {
             regionalSummary.style.display = 'block';
             englishPatientSummary.style.display = 'none';
-          } else { // english
+          } else {
             regionalSummary.style.display = 'none';
             englishPatientSummary.style.display = 'block';
           }
         });
       }
 
-      // Initial display of summaries
       toggleSummaries();
 
-      // Language toggle button event listener
       elements.toggleLanguageBtn.addEventListener('click', async () => {
         displayMode = displayMode === 'regional' ? 'english' : 'regional';
         localStorage.setItem('displayMode', displayMode);
@@ -568,7 +644,6 @@
         toggleSummaries();
       });
 
-      // Sidebar navigation (moved from inline script in HTML)
       document.querySelectorAll('.menu-item').forEach(item => {
         item.addEventListener('click', () => {
           document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
@@ -582,7 +657,6 @@
             targetSection.classList.add('active');
           }
 
-          // Hide chat input area when Prescriptions or Lab Reports is selected
           if (section === 'prescriptions' || section === 'lab-records') {
             elements.chatInputArea.style.display = 'none';
             elements.prescriptionBtn.classList.remove('active');
@@ -655,7 +729,6 @@
     }
   }
 
-  // Initialize on auth state change to ensure login state is resolved
   document.addEventListener('DOMContentLoaded', () => {
     console.log("DOM fully loaded, checking Firebase initialization");
     if (typeof window.auth === 'undefined' || typeof window.db === 'undefined' || typeof window.storage === 'undefined') {
@@ -665,7 +738,7 @@
     }
 
     console.log("Waiting for auth state change...");
-    let hasRedirected = false; // Prevent multiple redirects
+    let hasRedirected = false;
     auth.onAuthStateChanged((user) => {
       console.log("Auth state changed:", user ? `User: ${user.email}, UID: ${user.uid}` : "No user");
       if (!user && !hasRedirected) {

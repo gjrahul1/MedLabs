@@ -78,10 +78,10 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     if category == 'prescriptions' and existing_text:
         regional_template_text = (
             f"You are Gemini, a helpful language model. Analyze the following English prescription text and create a brief but detailed summary {language_prompts[selected_language]}. "
-            f"Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a point-wise summary where each point starts with a dash (-). "
-            f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. "
+            f"Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a brief introduction line, then a point-wise summary where each point MUST start with a dash (-). "
+            f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. Ensure each summary point is on a new line and starts with '- '. "
             f"Focus only on medical information (e.g., medicines, dosages). Include the patient's condition, recommended actions or tests, and medicines with dosages. "
-            f"Existing text:\n{{existing_text}}\n\nNew text:\n{{new_text}}\n\nOutput the summary as a Markdown string."
+            f"Existing text:\n{{existing_text}}\n\nNew text:\n{{new_text}}\n\nOutput the summary as a plain Markdown string. Do not wrap the output in code blocks (e.g., ```markdown or ```)."
         )
         regional_prompt = PromptTemplate.from_template(regional_template_text)
         regional_inputs = {
@@ -92,10 +92,10 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     else:
         regional_template_text = (
             f"You are Gemini, a helpful language model. Analyze the following English medical text and create a brief but detailed summary {language_prompts[selected_language]}. "
-            f"Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a point-wise summary where each point starts with a dash (-). "
-            f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. "
+            f"Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a brief introduction line, then a point-wise summary where each point MUST start with a dash (-). "
+            f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. Ensure each summary point is on a new line and starts with '- '. "
             f"Focus only on medical information. Include the patient's condition and recommended actions or follow-ups. "
-            f"Text:\n{{text}}\n\nOutput the summary as a Markdown string."
+            f"Text:\n{{text}}\n\nOutput the summary as a plain Markdown string. Do not wrap the output in code blocks (e.g., ```markdown or ```)."
         )
         regional_prompt = PromptTemplate.from_template(regional_template_text)
         regional_inputs = {
@@ -107,8 +107,8 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     professional_template = (
         f"You are Gemini, a helpful language model. Analyze the following English medical text and create a concise, professional medical summary in English "
         f"for a doctor. Start with the patient's condition as the first point, followed by key findings, prescribed medications with dosages (if applicable), "
-        f"and recommended follow-ups or tests. Use Markdown formatting: each point should start with a dash (-). "
-        f"Do not include the patient's name or age. Text:\n{{text}}\n\nOutput the summary as a Markdown string."
+        f"and recommended follow-ups or tests. Use Markdown formatting: each point MUST start with a dash (-). Ensure each summary point is on a new line and starts with '- '. "
+        f"Do not include the patient's name or age. Text:\n{{text}}\n\nOutput the summary as a plain Markdown string. Do not wrap the output in code blocks (e.g., ```markdown or ```)."
     )
     professional_prompt = PromptTemplate.from_template(professional_template)
     professional_inputs = {"text": professional_cleaned_text}
@@ -116,10 +116,10 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     # English Summary for Patient (always in English, concise and patient-friendly)
     english_patient_template = (
         f"You are Gemini, a helpful language model. Analyze the following English medical text and create a concise, patient-friendly summary in English "
-        f"for the patient. Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a point-wise summary where each point starts with a dash (-). "
-        f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. "
+        f"for the patient. Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a brief introduction line, then a point-wise summary where each point MUST start with a dash (-). "
+        f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. Ensure each summary point is on a new line and starts with '- '. "
         f"Use simple, warm, and clear language, avoiding complex medical jargon. Focus only on the most important medical information, such as the patient's condition "
-        f"and what they need to do (e.g., take medicine, follow-up actions). Text:\n{{text}}\n\nOutput the summary as a Markdown string."
+        f"and what they need to do (e.g., take medicine, follow-up actions). Text:\n{{text}}\n\nOutput the summary as a plain Markdown string. Do not wrap the output in code blocks (e.g., ```markdown or ```)."
     )
     english_patient_prompt = PromptTemplate.from_template(english_patient_template)
     english_patient_inputs = {
@@ -149,6 +149,41 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         professional_summary = professional_chain.invoke(professional_inputs)
         english_patient_summary = english_patient_chain.invoke(english_patient_inputs)
 
+        # Post-process summaries to enforce Markdown bullet point format
+        for summary_name, summary in [
+            ('regional_summary', regional_summary),
+            ('professional_summary', professional_summary),
+            ('english_patient_summary', english_patient_summary)
+        ]:
+            # Split the summary into lines
+            lines = summary.split('\n')
+            formatted_lines = []
+            in_list = False
+            for line in lines:
+                line = line.strip()
+                # Skip empty lines
+                if not line:
+                    formatted_lines.append(line)
+                    continue
+                # Check if the line should be a bullet point (e.g., contains bolded text or follows a pattern)
+                if line.startswith('Dear') or line.startswith('Here') or line.startswith('உங்கள்') or line.startswith('ನಿಮ್ಮ'):
+                    formatted_lines.append(line)
+                    continue
+                # If the line doesn't start with '-', add it
+                if not line.startswith('-'):
+                    line = f"- {line}"
+                formatted_lines.append(line)
+            cleaned_summary = '\n'.join(formatted_lines).strip()
+            if cleaned_summary != summary:
+                logger.debug(f"Formatted bullet points for {summary_name}")
+            # Update the local variable with the cleaned summary
+            if summary_name == 'regional_summary':
+                regional_summary = cleaned_summary
+            elif summary_name == 'professional_summary':
+                professional_summary = cleaned_summary
+            elif summary_name == 'english_patient_summary':
+                english_patient_summary = cleaned_summary
+
         logger.debug(f"Regional Summary ({selected_language}): {regional_summary}")
         logger.debug(f"Professional Summary (English): {professional_summary}")
         logger.debug(f"English Patient Summary: {english_patient_summary}")
@@ -175,14 +210,6 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         raise
 
 def generate_medical_history(uid: str, db) -> str:
-    """
-    Generate a concise medical history summary for a patient using initial screening, prescriptions, and lab records.
-    Args:
-        uid (str): The unique identifier of the patient.
-        db: Firestore client instance.
-    Returns:
-        str: A concise medical history summary.
-    """
     # Fetch all relevant data for the patient
     initial_screening = db.collection('initial_screenings').document(f'initial_screening_{uid}').get()
     prescriptions = db.collection('prescriptions').where('uid', '==', uid).order_by('timestamp', direction=firestore.Query.DESCENDING).get()

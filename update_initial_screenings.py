@@ -39,31 +39,44 @@ def update_initial_screenings(json_file_path):
         if not uid:
             raise ValueError("No UID found in medical_data.")
         
+        # Handle list fields by joining them into strings if necessary
+        symptoms = medical_data.get('symptoms', [])
+        severity = medical_data.get('severity', [])
+        duration = medical_data.get('duration', [])
+        triggers = medical_data.get('triggers', [])
+
+        # Convert lists to strings
+        symptoms_str = ', '.join(symptoms) if isinstance(symptoms, list) else symptoms
+        severity_str = ', '.join(severity) if isinstance(severity, list) else severity
+        duration_str = ', '.join(duration) if isinstance(duration, list) else duration
+        triggers_str = ', '.join(triggers) if isinstance(triggers, list) else triggers
+
         # Prepare the updated data
         updated_data = {
             'consultant_id': medical_data.get('consultant_id'),
-            'symptoms': medical_data.get('symptoms', ''),
-            'severity': medical_data.get('severity', ''),
-            'duration': medical_data.get('duration', ''),
-            'triggers': medical_data.get('triggers', ''),
+            'symptoms': symptoms_str,
+            'severity': severity_str,
+            'duration': duration_str,
+            'triggers': triggers_str,
             'patient_name': medical_data.get('patient_name', 'Unknown'),
             'uid': uid,
             'timestamp': firestore.SERVER_TIMESTAMP
         }
 
-        # Find the most recent initial_screenings document for the UID
-        doc_ref = db.collection('initial_screenings').where(
-            filter=firestore.FieldFilter('uid', '==', uid)
-        ).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).get()
+        # Update the specific initial_screenings document using the known document ID
+        doc_id = f'initial_screening_{uid}'
+        doc_ref = db.collection('initial_screenings').document(doc_id)
 
-        if not doc_ref:
-            raise ValueError(f"No initial_screenings document found for UID: {uid}")
-
-        # Update the document
-        for doc in doc_ref:
-            doc.reference.set(updated_data, merge=True)
+        doc_snap = doc_ref.get()
+        if not doc_snap.exists:
+            print(f"No initial_screenings document found for UID: {uid} at document ID: {doc_id}")
+            # Create the document if it doesn't exist
+            doc_ref.set(updated_data)
+            print(f"Created new initial_screenings document for UID: {uid} with data: {updated_data}")
+        else:
+            # Update the existing document
+            doc_ref.set(updated_data, merge=True)
             print(f"Updated initial_screenings document for UID: {uid} with data: {updated_data}")
-            break
 
     except Exception as e:
         print(f"Error updating initial_screenings: {str(e)}")
@@ -72,7 +85,7 @@ def update_initial_screenings(json_file_path):
 if __name__ == "__main__":
     try:
         # Directory where the JSON files are stored
-        json_directory = os.path.join("C:", "Users", "gjrah", "Documents", "Major Project", "App Development","Users")
+        json_directory = os.path.join("C:", "Users", "gjrah", "Documents", "Major Project", "App Development", "Users")
         
         # Get the latest JSON file
         latest_json_file = get_latest_json_file(json_directory)

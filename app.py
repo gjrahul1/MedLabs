@@ -15,7 +15,7 @@ from func_timeout import func_timeout, FunctionTimedOut
 import firebase_admin
 from firebase_admin import credentials, auth, firestore, storage
 from google_vision import extract_text_from_image
-from gemini_processor import process_text_with_gemini
+from gemini_processor import process_text_with_gemini,generate_medical_history
 from openai import OpenAI
 from gtts import gTTS
 import httpx
@@ -1313,6 +1313,28 @@ def start_conversation():
 
             session['conversation_history'] = f"{history}\nPatient: {transcript}\nAgent: {processed_data['response']}" if transcript else f"{history}\nAgent: {processed_data['response']}"
 
+            # If the conversation is complete, save the medical_data to a JSON file
+            if processed_data.get('conversationComplete', False):
+                medical_data['uid'] = uid
+                medical_data['patient_name'] = session.get('user_info', {}).get('full_name', 'Unknown')
+                # Fetch consultant_id from the initial_screenings document
+                doc_ref = db.collection('initial_screenings').document(f'initial_screening_{uid}')
+                doc_snap = doc_ref.get()
+                if doc_snap.exists:
+                    medical_data['consultant_id'] = doc_snap.to_dict().get('consultant_id')
+                else:
+                    medical_data['consultant_id'] = None
+
+                # Save to JSON file
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                json_filename = f"medical_data_{uid}_{timestamp}.json"
+                json_directory = os.path.join("C:", "Users", "gjrah", "Documents", "Major Project", "App Development", "Users")
+                os.makedirs(json_directory, exist_ok=True)
+                json_filepath = os.path.join(json_directory, json_filename)
+                with open(json_filepath, 'w', encoding='utf-8') as f:
+                    json.dump({'medical_data': medical_data}, f, indent=4)
+                logger.info(f"Saved medical data to {json_filepath}")
+
             return jsonify({
                 'success': True,
                 'response': processed_data['response'],
@@ -1344,6 +1366,28 @@ def start_conversation():
                     medical_data[key] = []
 
             session['conversation_history'] = f"{history}\nPatient: {audio_file.filename.split('.')[0]}\nAgent: {processed_data['response']}"
+
+            # If the conversation is complete, save the medical_data to a JSON file
+            if processed_data.get('conversationComplete', False):
+                medical_data['uid'] = uid
+                medical_data['patient_name'] = session.get('user_info', {}).get('full_name', 'Unknown')
+                # Fetch consultant_id from the initial_screenings document
+                doc_ref = db.collection('initial_screenings').document(f'initial_screening_{uid}')
+                doc_snap = doc_ref.get()
+                if doc_snap.exists:
+                    medical_data['consultant_id'] = doc_snap.to_dict().get('consultant_id')
+                else:
+                    medical_data['consultant_id'] = None
+
+                # Save to JSON file
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                json_filename = f"medical_data_{uid}_{timestamp}.json"
+                json_directory = os.path.join("C:", "Users", "gjrah", "Documents", "Major Project", "App Development", "Users")
+                os.makedirs(json_directory, exist_ok=True)
+                json_filepath = os.path.join(json_directory, json_filename)
+                with open(json_filepath, 'w', encoding='utf-8') as f:
+                    json.dump({'medical_data': medical_data}, f, indent=4)
+                logger.info(f"Saved medical data to {json_filepath}")
 
             return jsonify({
                 'success': True,
@@ -1497,8 +1541,8 @@ def process_medical_history():
             logger.error("Missing UID in request")
             return jsonify({'success': False, 'error': 'Missing UID'}), 400
 
-        # Placeholder for generate_medical_history (not provided)
-        summary = "Medical history summary placeholder"
+        # Generate the medical history summary using gemini_processor
+        summary = generate_medical_history(uid, db)
         return jsonify({'success': True, 'summary': summary})
     except Exception as e:
         logger.error(f"Error processing medical history: {str(e)}")

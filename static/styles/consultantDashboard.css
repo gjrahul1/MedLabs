@@ -202,6 +202,9 @@ body {
 .search-wrapper {
   position: relative;
   margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  width: 100%;
 }
 
 .patient-search-input {
@@ -230,6 +233,7 @@ body {
   color: #4c51bf;
 }
 
+/* Default styling for patient-dropdown (used in Patient List section) */
 .patient-dropdown {
   width: 100%;
   padding: 12px 15px;
@@ -243,7 +247,77 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  opacity: 0; /* Hidden but still functional for JavaScript */
+  opacity: 0; /* Hidden but functional for JavaScript in Patient List section */
+}
+
+/* Override patient-dropdown for Reports section to make it visible */
+#reports .reports-container .patient-dropdown {
+  position: static;
+  opacity: 1;
+  margin-left: 10px;
+  padding: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 14px;
+  width: 200px;
+  background-color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+#reports .reports-container .patient-dropdown:hover,
+#reports .reports-container .patient-dropdown:focus {
+  border-color: #4c51bf;
+  box-shadow: 0 0 5px rgba(76, 81, 191, 0.5);
+}
+
+#reports .reports-container .patient-dropdown option {
+  padding: 5px;
+  background-color: #fff;
+  color: #2d3748;
+}
+
+/* Ensure the search wrapper in the Reports section is visible */
+#reports .reports-container .search-wrapper {
+  display: flex !important;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 20px;
+  position: relative;
+  visibility: visible !important;
+  height: auto !important;
+  min-height: 40px;
+  background-color: #f8fafc;
+  border-radius: 4px;
+  padding: 5px;
+}
+
+/* Style the search input in Reports section */
+#reports .reports-container .patient-search-input {
+  flex: 1;
+  padding: 8px 40px 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 14px;
+  background-color: #fff;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+#reports .reports-container .patient-search-input:focus {
+  border-color: #4c51bf;
+  box-shadow: 0 0 5px rgba(76, 81, 191, 0.5);
+}
+
+/* Style the search icon in Reports section */
+#reports .reports-container .search-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #6b7280;
+  font-size: 14px;
 }
 
 /* Health Condition Card */
@@ -295,7 +369,7 @@ body {
 
 .severity-fill {
   height: 100%;
-  transition: width 0.5s ease-in-out;
+  transition: width 0.3s ease-in-out;
 }
 
 .severity-fill.mild {
@@ -365,22 +439,33 @@ body {
   border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
-/* Reports Section (Prescriptions and Lab Reports Side by Side) */
+/* Reports Section (Prescriptions and Lab Reports Stacked Vertically) */
 .reports-container {
   display: flex;
+  flex-direction: column; /* Stack vertically */
   gap: 30px;
-  flex-wrap: wrap;
+}
+
+/* Patient Selection Styling */
+.patient-selection {
+  margin-bottom: 20px;
+}
+
+.dropdown-label {
+  font-size: 16px;
+  font-weight: 500;
+  color: #2d3748;
+  margin-right: 10px;
 }
 
 .report-section {
-  flex: 1;
-  min-width: 300px;
   background: rgba(255, 255, 255, 0.95);
   padding: 20px;
   border-radius: 15px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(0, 0, 0, 0.05);
+  width: 100%; /* Take full width */
 }
 
 .report-container {
@@ -401,6 +486,8 @@ body {
   backdrop-filter: blur(10px);
   border: 1px solid rgba(0, 0, 0, 0.05);
   opacity: 0;
+  width: 100%; /* Full width of the parent */
+  min-width: 500px; /* Ensure card is wide enough for readability */
 }
 
 .report-card:hover {
@@ -458,4 +545,15 @@ body {
   color: #718096;
   text-align: center;
   margin-top: 20px;
+}
+
+/* Date Headers in Reports */
+.date-header {
+  font-size: 16px;
+  font-weight: 600;
+  color: #4c51bf;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #e0e6ed;
+  padding-bottom: 5px;
 }

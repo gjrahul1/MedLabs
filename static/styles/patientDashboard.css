@@ -466,7 +466,6 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 20px;
   padding-right: 10px;
-  /* Removed max-height and overflow-y to allow content to expand */
 }
 
 .report-card {
@@ -478,6 +477,9 @@ body {
   backdrop-filter: blur(10px);
   border: 1px solid rgba(0, 0, 0, 0.05);
   opacity: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .report-card:hover {
@@ -512,18 +514,34 @@ body {
   background: rgba(247, 250, 252, 0.95);
   padding: 15px;
   border-radius: 8px;
-  font-family: 'Courier New', monospace;
-  white-space: pre-wrap;
+  font-family: 'Noto Sans Kannada', 'Courier New', monospace;
   border: 1px solid rgba(0, 0, 0, 0.05);
+  text-align: left;
+  direction: ltr;
+  unicode-bidi: embed;
+  line-height: 1.6; /* Improve readability */
+  color: #2d3748;
 }
 
 .summary-container p {
   margin: 5px 0;
+  line-height: 1.5;
+}
+
+.summary-container ul {
+  margin: 10px 0;
+  padding-left: 20px;
+  list-style-type: disc;
+}
+
+.summary-container li {
+  margin-bottom: 5px;
+  line-height: 1.5;
 }
 
 .summary-container strong {
   font-weight: 700;
-  color: #2c3e50; /* Optional: Darker color for emphasis */
+  color: #2c3e50;
 }
 
 .summary-heading {
