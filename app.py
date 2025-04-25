@@ -14,13 +14,13 @@ from flask import Flask, render_template, request, jsonify, session, redirect,ur
 from func_timeout import func_timeout, FunctionTimedOut
 import firebase_admin
 from firebase_admin import credentials, auth, firestore, storage
+from google_vision import extract_text_from_image
+from gemini_processor import process_text_with_gemini
 from openai import OpenAI
 from gtts import gTTS
 import httpx
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
-
-# Import the determine_specialty function from symptom_mapping.py
 from symptom_mapping import determine_specialty, clean_symptom, symptom_specialty_map
 
 # Setup logging
@@ -54,7 +54,7 @@ cred_path = './Cred/Firebase/Med App/med-labs-42f13-firebase-adminsdk-fbsvc-43b7
 if not firebase_admin._apps:
     cred = credentials.Certificate(cred_path)
     firebase_admin.initialize_app(cred, {
-        'storageBucket': 'med-labs-42f13.appspot.com'
+        'storageBucket': 'med-labs-42f13'
     })
     logger.info("✅ Firebase initialized successfully with bucket: med-labs-42f13. SDK Version: %s", firebase_admin.__version__)
 
@@ -1411,30 +1411,58 @@ def process_upload():
         uid = request.form.get('uid')
         consultant_id = request.form.get('consultantId')
 
+        # Validate inputs
+        if not all([language_text, file_path, category, uid, consultant_id]):
+            missing = [key for key, value in {'languageText': language_text, 'filePath': file_path, 'category': category, 'uid': uid, 'consultantId': consultant_id}.items() if not value]
+            logger.error(f"Missing required fields: {missing}")
+            return jsonify({'success': False, 'error': f"Missing fields: {missing}"}), 400
+
+        # Download the file from Google Cloud Storage
         blob = bucket.blob(file_path)
         temp_file = os.path.join(tempfile.gettempdir(), f'temp_{uid}.jpg')
         os.makedirs(os.path.dirname(temp_file), exist_ok=True)
         blob.download_to_filename(temp_file)
 
-        # Placeholder for extract_text_from_image (not provided)
-        extracted_text = "Extracted text placeholder"
+        # Extract text using Google Vision API
+        try:
+            extracted_text = extract_text_from_image(temp_file)
+            logger.debug(f"Extracted text: {extracted_text}")
+        except Exception as e:
+            logger.error(f"Failed to extract text from image: {str(e)}")
+            return jsonify({'success': False, 'error': f"Text extraction failed: {str(e)}"}), 500
+        finally:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+                logger.debug(f"Cleaned up temporary file: {temp_file}")
 
+        # Fetch existing summary if category is 'prescriptions'
         existing_text = None
         if category == 'prescriptions':
             existing_summaries = db.collection('prescriptions').where('uid', '==', uid).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).get()
             if existing_summaries:
                 existing_text = existing_summaries[0].to_dict().get('summary', '')
+                logger.debug(f"Existing summary for UID {uid}: {existing_text}")
 
+        # Fetch patient name
         patient_ref = db.collection('patient_registrations').document(uid).get()
         patient_name = patient_ref.to_dict().get('full_name', 'Patient') if patient_ref.exists else 'Patient'
 
-        # Placeholder for process_text_with_gemini (not provided)
-        result = {
-            'regional_summary': "Summary in English",
-            'professional_summary': "Professional summary",
-            'language': "en"
-        }
+        # Process the extracted text with Gemini to generate summaries
+        try:
+            result = process_text_with_gemini(
+                extracted_text=extracted_text,
+                category=category,
+                language=language_text,
+                patient_name=patient_name,
+                existing_text=existing_text,
+                uid=uid
+            )
+            logger.debug(f"Gemini processing result: {result}")
+        except Exception as e:
+            logger.error(f"Failed to process text with Gemini: {str(e)}")
+            return jsonify({'success': False, 'error': f"Text processing failed: {str(e)}"}), 500
 
+        # Store the results in Firestore
         doc_ref = db.collection(category).document()
         doc_ref.set({
             'uid': uid,
@@ -1445,6 +1473,8 @@ def process_upload():
             'language': result['language'],
             'timestamp': firestore.SERVER_TIMESTAMP
         })
+        logger.info(f"Successfully stored summary for UID {uid} in category {category}")
+
         return jsonify({'success': True, 'language': result['language']})
     except Exception as e:
         logger.error(f"Processing failed: {str(e)}")

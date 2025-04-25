@@ -15,14 +15,19 @@ load_dotenv(dotenv_path=os.path.join(os.getcwd(), '.env'))
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def extract_text_from_pdf(pdf_path):
-    with pdfplumber.open(pdf_path) as pdf:
-        text = ""
-        for page in pdf.pages:
-            text += page.extract_text() or ""
-    return text
-
 def process_text_with_gemini(extracted_text: str, category: str = None, language: str = "kannada", patient_name: str = "ರೋಗಿ", existing_text: str = None, uid: str = None) -> dict:
+    """
+    Process the extracted text using Gemini to generate regional and professional summaries.
+    Args:
+        extracted_text (str): Text extracted from the image or PDF.
+        category (str): Category of the document ('prescriptions' or 'lab_records').
+        language (str): Language for the regional summary ('kannada', 'tamil', or 'english').
+        patient_name (str): Name of the patient.
+        existing_text (str): Existing summary text for prescriptions, if any.
+        uid (str): Unique identifier of the patient.
+    Returns:
+        dict: Contains regional_summary, professional_summary, medical_history, and language.
+    """
     # Initialize Firestore client inside the function
     db = firestore.client()
 
@@ -37,15 +42,10 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     cleaned_text = re.sub(r'[^\x00-\x7F]+', ' ', extracted_text)
     
     # Remove personal identifiers
-    # Remove names (e.g., Mr. CH. SAMUEL, Dr. Naveen Polavarapu)
     cleaned_text = re.sub(r'(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*', '[Name]', cleaned_text, flags=re.IGNORECASE)
-    # Remove other identifiers (address, phone, contact, id, date, time, location)
     cleaned_text = re.sub(r'\b(?:address|phone|contact|id|date|time|location)\b.*?(?=\n|$)', '', cleaned_text, flags=re.IGNORECASE)
-    # Remove standalone dates (e.g., 2025-04-20, 20/04/2025)
     cleaned_text = re.sub(r'\b\d{4}-\d{2}-\d{2}\b|\b\d{2}/\d{2}/\d{4}\b', '[Date]', cleaned_text)
-    # Remove phone numbers (e.g., +91 1234567890, 123-456-7890)
     cleaned_text = re.sub(r'\b\+?\d{1,3}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b', '[Phone]', cleaned_text)
-    # Remove curly braces content not part of a larger structure
     cleaned_text = re.sub(r'\{(?![^{}]*\})', '', cleaned_text)
     cleaned_text = re.sub(r'(?<!\{)[^{}]*\}(?![^{}]*\})', '', cleaned_text)
 
