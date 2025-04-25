@@ -41,13 +41,15 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     # Clean and sanitize the extracted text
     cleaned_text = re.sub(r'[^\x00-\x7F]+', ' ', extracted_text)
     
-    # Remove personal identifiers
+    # Remove personal identifiers and sensitive information
     cleaned_text = re.sub(r'(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*', '[Name]', cleaned_text, flags=re.IGNORECASE)
     cleaned_text = re.sub(r'\b(?:address|phone|contact|id|date|time|location)\b.*?(?=\n|$)', '', cleaned_text, flags=re.IGNORECASE)
     cleaned_text = re.sub(r'\b\d{4}-\d{2}-\d{2}\b|\b\d{2}/\d{2}/\d{4}\b', '[Date]', cleaned_text)
     cleaned_text = re.sub(r'\b\+?\d{1,3}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b', '[Phone]', cleaned_text)
     cleaned_text = re.sub(r'\{(?![^{}]*\})', '', cleaned_text)
     cleaned_text = re.sub(r'(?<!\{)[^{}]*\}(?![^{}]*\})', '', cleaned_text)
+    # Remove age information
+    cleaned_text = re.sub(r'\b(age|aged)?\s*\d+\s*(years|yrs|year|old)?\b', '[Age]', cleaned_text, flags=re.IGNORECASE)
 
     if existing_text:
         existing_text = re.sub(r'(?:Mr\.|Mrs\.|Ms\.|Dr\.)\s+[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*', '[Name]', existing_text, flags=re.IGNORECASE)
@@ -56,6 +58,8 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
         existing_text = re.sub(r'\b\+?\d{1,3}[-.\s]?\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b', '[Phone]', existing_text)
         existing_text = re.sub(r'\{(?![^{}]*\})', '', existing_text)
         existing_text = re.sub(r'(?<!\{)[^{}]*\}(?![^{}]*\})', '', existing_text)
+        # Remove age information from existing text
+        existing_text = re.sub(r'\b(age|aged)?\s*\d+\s*(years|yrs|year|old)?\b', '[Age]', existing_text, flags=re.IGNORECASE)
 
     # Anonymize for professional summary
     professional_cleaned_text = cleaned_text
@@ -113,13 +117,15 @@ def process_text_with_gemini(extracted_text: str, category: str = None, language
     professional_prompt = PromptTemplate.from_template(professional_template)
     professional_inputs = {"text": professional_cleaned_text}
 
-    # English Summary for Patient (always in English, concise and patient-friendly)
+    # English Summary for Patient (always in English, concise and patient-friendly, addressing the patient directly)
     english_patient_template = (
         f"You are Gemini, a helpful language model. Analyze the following English medical text and create a concise, patient-friendly summary in English "
-        f"for the patient. Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a brief introduction line, then a point-wise summary where each point MUST start with a dash (-). "
+        f"for the patient. Start with a greeting 'Dear {{patient_name}},' on a new line, followed by a brief introduction line like 'Here is a summary of your medical report:', "
+        f"then a point-wise summary where each point MUST start with a dash (-). "
         f"Use Markdown formatting: bold (**text**) key medical terms like condition names, medicine names, or important actions. Ensure each summary point is on a new line and starts with '- '. "
-        f"Use simple, warm, and clear language, avoiding complex medical jargon. Focus only on the most important medical information, such as the patient's condition "
-        f"and what they need to do (e.g., take medicine, follow-up actions). Text:\n{{text}}\n\nOutput the summary as a plain Markdown string. Do not wrap the output in code blocks (e.g., ```markdown or ```)."
+        f"Use very simple, warm, and clear language, avoiding complex medical jargon (e.g., replace 'sepsis' with 'serious infection', 'MODS' with 'problems with your organs', etc.). "
+        f"Focus only on the most important medical information, such as the patient's condition and what they need to do (e.g., hospital stay, follow-up actions). "
+        f"Do not include the patient's age. Text:\n{{text}}\n\nOutput the summary as a plain Markdown string. Do not wrap the output in code blocks (e.g., ```markdown or ```)."
     )
     english_patient_prompt = PromptTemplate.from_template(english_patient_template)
     english_patient_inputs = {
