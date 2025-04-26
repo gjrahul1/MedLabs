@@ -6,6 +6,9 @@
 
   console.log("Firebase services initialized:", { auth, db, storage });
 
+  // Global object to store patient UID-to-name mapping
+  let patientNameMap = {};
+
   function getGreeting() {
     const hour = new Date().getHours();
     return hour < 12 ? "Good Morning" : hour < 18 ? "Good Afternoon" : "Good Evening";
@@ -104,10 +107,14 @@
 
       for (const doc of patientsQuery.docs) {
         const patientData = doc.data();
+        const patientUid = doc.id;
+        const patientName = patientData.full_name || patientUid;
         patients.push({
-          uid: doc.id,
-          full_name: patientData.full_name || doc.id
+          uid: patientUid,
+          full_name: patientName
         });
+        // Store UID-to-name mapping
+        patientNameMap[patientUid] = patientName;
       }
 
       patients.forEach(patient => {
@@ -582,14 +589,39 @@
   }
 
   async function handlePatientSelection(uid) {
+    const selectedPatientDisplay = document.getElementById("selected-patient-name");
+    const loader = document.getElementById("patient-loader");
+    const patientDetailsDiv = document.getElementById("patient-details");
+    const conditionList = document.getElementById("condition-list");
+
     if (!uid) {
-      document.getElementById("patient-details").style.display = 'none';
+      if (selectedPatientDisplay) {
+        selectedPatientDisplay.textContent = "Patient Selected: None";
+      }
+      if (loader) {
+        loader.style.display = 'none';
+      }
+      if (patientDetailsDiv) {
+        patientDetailsDiv.style.display = 'none';
+      }
       return;
     }
-    const conditionList = document.getElementById("condition-list");
+
+    // Show loader and update selected patient name
+    if (selectedPatientDisplay) {
+      const patientName = patientNameMap[uid] || "Unknown";
+      selectedPatientDisplay.textContent = `Patient Selected: ${patientName}`;
+    }
+    if (loader) {
+      loader.style.display = 'inline-flex';
+    }
+    if (patientDetailsDiv) {
+      patientDetailsDiv.style.display = 'block';
+    }
     if (conditionList) {
       conditionList.innerHTML = '<li>Loading patient data...</li>';
     }
+
     try {
       console.log("Selected patient UID:", uid);
       await loadHealthCondition(uid);
@@ -601,6 +633,11 @@
       console.error("Failed to load or update patient data:", error);
       if (conditionList) {
         conditionList.innerHTML = `<li class="error">Failed to load patient data: ${error.message}. Please try again or contact support.</li>`;
+      }
+    } finally {
+      // Hide loader after loading is complete
+      if (loader) {
+        loader.style.display = 'none';
       }
     }
   }
