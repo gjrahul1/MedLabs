@@ -11,7 +11,7 @@ firebase-debug.*.log*
 .firebase/
 
 #pycache
-.__pycache__/
+__pycache__/
 
 # Firebase config
 
