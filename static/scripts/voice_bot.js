@@ -1,7 +1,7 @@
-// Global flag to ensure initializeBot is called only once
-let hasInitializedBot = false;
-
 document.addEventListener('DOMContentLoaded', () => {
+  // Local flag to ensure initializeBot is called only once
+  let hasInitializedBot = false;
+
   console.log('DOMContentLoaded fired at:', new Date().toISOString());
   if (hasInitializedBot) {
     console.log('initializeBot already called, skipping duplicate DOMContentLoaded event');
@@ -107,6 +107,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Start recording audio using MediaRecorder
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.start();
+      console.log("Recording started");
+
+      return { mediaRecorder, stream, chunks };
+    } catch (error) {
+      console.error("Error starting recording:", error);
+      throw error;
+    }
+  }
+
+  // Stop recording and return the audio blob
+  async function stopRecording(recordingContext) {
+    const { mediaRecorder, stream, chunks } = recordingContext;
+    return new Promise((resolve, reject) => {
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        stream.getTracks().forEach(track => track.stop());
+        resolve(blob);
+      };
+
+      mediaRecorder.onerror = (e) => {
+        console.error("Recording error:", e);
+        stream.getTracks().forEach(track => track.stop());
+        reject(e);
+      };
+
+      mediaRecorder.stop();
+      console.log("Recording stopped");
+    });
+  }
+
   // Debounce function to prevent rapid successive calls
   function debounce(func, wait) {
     let timeout;
@@ -117,6 +159,73 @@ document.addEventListener('DOMContentLoaded', () => {
         func.apply(this, args);
       }, wait);
     };
+  }
+
+  // Play audio with retry and re-generation on failure
+  async function playAudio(url, retries = 2) {
+    for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      try {
+        console.log(`Attempt ${attempt} to play audio from:`, url);
+        audioPlayer.src = url;
+        const playPromise = audioPlayer.play();
+        await playPromise;
+        console.log('Audio playback started successfully');
+        return new Promise((resolve) => {
+          audioPlayer.onended = () => {
+            console.log('Audio playback ended');
+            resolve();
+          };
+        });
+      } catch (error) {
+        console.error(`Attempt ${attempt} failed to play audio:`, error.message, error.stack);
+        if (error.name === "NotSupportedError" && attempt <= retries) {
+          console.warn("NotSupportedError detected, attempting to re-generate audio...");
+          // Extract cache key from URL
+          const cacheKey = url.split('/').pop().replace('.mp3', '');
+          // Re-generate audio
+          const newUrl = await regenerateAudio(cacheKey);
+          if (newUrl) {
+            url = newUrl; // Update URL to the new one
+            continue; // Retry with the new URL
+          }
+        }
+        if (attempt === retries + 1) {
+          console.error('Audio playback failed after retries:', error);
+          throw new Error('Failed to play audio after retries: ' + error.message);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  }
+
+  // Function to re-generate audio by calling the server
+  async function regenerateAudio(cacheKey) {
+    try {
+      console.log(`Requesting re-generation of audio for cache key: ${cacheKey}`);
+      const idToken = sessionStorage.getItem('idToken');
+      if (!idToken) {
+        throw new Error('No authentication token available');
+      }
+      const response = await axios.post('/regenerate-audio', {
+        cacheKey: cacheKey
+      }, {
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = response.data;
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to re-generate audio');
+      }
+
+      console.log('Audio re-generated successfully:', data.audio_url);
+      return data.audio_url;
+    } catch (error) {
+      console.error('Error re-generating audio:', error.message);
+      return null;
+    }
   }
 
   // Main initialization function
@@ -182,6 +291,8 @@ document.addEventListener('DOMContentLoaded', () => {
       let hasInitiatedConversation = false; // Global flag to prevent multiple initiations
       let isInitiatingConversation = false; // Lock to prevent concurrent initiation
       let hasAuthListenerAttached = false; // Flag to ensure single auth listener attachment
+      let recordingContext = null; // For recording audio
+      let uid = null; // Store the patient's UID
 
       // Function to generate a unique session ID
       function generateSessionId() {
@@ -215,137 +326,94 @@ document.addEventListener('DOMContentLoaded', () => {
         transcriptPanel.classList.toggle('recording', isRecognizing);
       }
 
-      // Play audio with retry
-      async function playAudio(url, retries = 2) {
+      // Continue the conversation by calling /start_conversation
+      async function continueConversation(transcript) {
         try {
-          audioPlayer.src = url;
-          console.log('Attempting to play audio from:', url);
-          const playPromise = audioPlayer.play();
-          await playPromise;
-          console.log('Audio playback started successfully');
-          return new Promise((resolve) => {
-            audioPlayer.onended = () => {
-              console.log('Audio playback ended');
-              resolve();
-            };
+          transcriptPanel.classList.add('processing');
+          const startTime = Date.now();
+          console.log('Sending request to /start_conversation at:', new Date().toISOString());
+
+          const formData = new FormData();
+          formData.append('transcript', transcript);
+          formData.append('sessionId', sessionState.sessionId);
+          formData.append('medicalData', JSON.stringify(sessionState.medicalData));
+          formData.append('currentState', sessionState.currentState);
+
+          const response = await axios.post('/start_conversation', formData, {
+            headers: {
+              'Authorization': `Bearer ${idToken}`,
+              'Content-Type': 'multipart/form-data'
+            },
+            timeout: 30000 // Increased timeout to 30 seconds
           });
-        } catch (error) {
-          console.error('Audio playback error:', error.message, error.stack);
-          if (retries > 0) {
-            console.warn(`Audio playback failed, retrying (${retries} left):`, error);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            return playAudio(url, retries - 1);
+
+          const endTime = Date.now();
+          console.log(`Received response from /start_conversation after ${endTime - startTime}ms at:`, new Date().toISOString());
+          console.log('Full server response:', JSON.stringify(response.data, null, 2));
+
+          const data = response.data;
+          if (!data.success) {
+            throw new Error(data.error || 'Server error');
           }
-          console.error('Audio playback failed after retries:', error);
-          throw new Error('Failed to play audio after retries');
+
+          sessionState.medicalData = data.medical_data;
+          sessionState.currentState = data.nextState || sessionState.currentState;
+          updateTranscript('AI', data.response);
+
+          if (data.audio_url) {
+            console.log('Playing audio from URL:', data.audio_url);
+            try {
+              await playAudio(data.audio_url);
+            } catch (error) {
+              console.error('Failed to play audio, proceeding with text response:', error);
+              statusDiv.textContent = 'Failed to play audio, displaying text response.';
+            }
+          } else {
+            console.warn('No audio_url in response');
+            statusDiv.textContent = 'Audio unavailable, displaying text response.';
+          }
+
+          if (data.redirect && data.conversationComplete) {
+            console.log('Conversation complete, redirecting to dashboard...');
+            console.log('Redirect URL:', data.redirect);
+            console.log('Conversation complete flag:', data.conversationComplete);
+            try {
+              await axios.get('/logout?confirm=yes', {
+                headers: { 'Authorization': `Bearer ${idToken}` }
+              });
+              console.log('Logout request sent successfully');
+            } catch (logoutError) {
+              console.warn('Logout failed, proceeding with redirect:', logoutError);
+            }
+            setTimeout(() => {
+              console.log('Executing redirect to:', data.redirect);
+              window.location.href = data.redirect;
+            }, 500);
+          } else {
+            console.log('Redirect or conversationComplete missing:', {
+              redirect: data.redirect,
+              conversationComplete: data.conversationComplete
+            });
+            if (data.response.includes("You have been assigned to")) {
+              console.log('Doctor assignment detected in response, forcing redirect to dashboard');
+              setTimeout(() => {
+                console.log('Executing forced redirect to: /dashboard');
+                window.location.href = '/dashboard';
+              }, 500);
+            }
+          }
+        } catch (error) {
+          console.error('Continue conversation error:', error.response ? error.response.data : error.message, error.stack);
+          statusDiv.textContent = 'Error processing response: ' + (error.message || 'Unknown error') + '. Please try again.';
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log('Retrying conversation processing, attempt:', retryCount);
+            setTimeout(() => continueConversation(transcript), 2000);
+          }
+        } finally {
+          transcriptPanel.classList.remove('processing');
         }
       }
-
-      // Process transcript with server (debounced to prevent rapid calls)
-      const debouncedProcessTranscript = debounce(async (transcript) => {
-        if (transcript === lastProcessedTranscript) {
-          console.log('Duplicate transcript detected, skipping:', transcript);
-          return;
-        }
-        lastProcessedTranscript = transcript;
-        console.log('Processing transcript:', transcript);
-      
-        if (!idToken) {
-          statusDiv.textContent = 'Authentication required. Please log in.';
-          return;
-        }
-      
-        const maxTimeoutRetries = 2; // Retry up to 2 times on timeout
-        let timeoutRetryCount = 0;
-      
-        while (timeoutRetryCount <= maxTimeoutRetries) {
-          try {
-            transcriptPanel.classList.add('processing');
-            const startTime = Date.now();
-            console.log('Sending request to /start_conversation at:', new Date().toISOString());
-      
-            const response = await axios.post('/start_conversation', {
-              transcript,
-              sessionId: sessionState.sessionId,
-              medicalData: sessionState.medicalData,
-              currentState: sessionState.currentState
-            }, {
-              headers: { 'Authorization': `Bearer ${idToken}` },
-              timeout: 30000 // Increased timeout to 30 seconds
-            });
-      
-            const endTime = Date.now();
-            console.log(`Received response from /start_conversation after ${endTime - startTime}ms at:`, new Date().toISOString());
-            console.log('Full server response:', JSON.stringify(response.data, null, 2));
-      
-            const data = response.data;
-            if (!data.success) {
-              throw new Error(data.error || 'Server error');
-            }
-      
-            sessionState.medicalData = data.medicalData;
-            sessionState.currentState = data.nextState || sessionState.currentState;
-            updateTranscript('AI', data.response);
-      
-            if (data.audio_url) {
-              console.log('Playing audio from URL:', data.audio_url);
-              await playAudio(data.audio_url);
-            } else {
-              console.warn('No audio_url in response');
-            }
-      
-            if (data.redirect && data.conversationComplete) {
-              console.log('Conversation complete, redirecting to dashboard...');
-              console.log('Redirect URL:', data.redirect);
-              console.log('Conversation complete flag:', data.conversationComplete);
-              try {
-                await axios.get('/logout?confirm=yes', {
-                  headers: { 'Authorization': `Bearer ${idToken}` }
-                });
-                console.log('Logout request sent successfully');
-              } catch (logoutError) {
-                console.warn('Logout failed, proceeding with redirect:', logoutError);
-              }
-              setTimeout(() => {
-                console.log('Executing redirect to:', data.redirect);
-                window.location.href = data.redirect;
-              }, 500);
-            } else {
-              console.log('Redirect or conversationComplete missing:', {
-                redirect: data.redirect,
-                conversationComplete: data.conversationComplete
-              });
-              if (data.response.includes("You have been assigned to")) {
-                console.log('Doctor assignment detected in response, forcing redirect to dashboard');
-                setTimeout(() => {
-                  console.log('Executing forced redirect to: /dashboard');
-                  window.location.href = '/dashboard';
-                }, 500);
-              }
-            }
-      
-            break; // Exit the retry loop on success
-      
-          } catch (error) {
-            console.error('Process transcript error:', error.response ? error.response.data : error.message, error.stack);
-            if (error.code === 'ECONNABORTED' && error.message.includes('timeout') && timeoutRetryCount < maxTimeoutRetries) {
-              timeoutRetryCount++;
-              console.log(`Timeout occurred, retrying (${timeoutRetryCount}/${maxTimeoutRetries})...`);
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retrying
-              continue;
-            }
-            statusDiv.textContent = 'Error processing response: ' + (error.message || 'Unknown error') + '. Please try again.';
-            if (retryCount < maxRetries) {
-              retryCount++;
-              console.log('Retrying transcript processing, attempt:', retryCount);
-              setTimeout(() => debouncedProcessTranscript(transcript), 2000);
-            }
-            break; // Exit the retry loop on non-timeout errors or max retries reached
-          } finally {
-            transcriptPanel.classList.remove('processing');
-          }
-        }
-      }, 1000);
 
       // Initiate conversation with lock
       async function initiateConversation() {
@@ -371,16 +439,21 @@ document.addEventListener('DOMContentLoaded', () => {
           }, {
             headers: { 'Authorization': `Bearer ${idToken}` }
           });
-      
+
           const data = response.data;
           if (!data.success) {
             throw new Error(data.error || 'Server error');
           }
-      
+
           updateTranscript('AI', data.response);
           if (data.audio_url) {
             console.log('Playing audio from URL:', data.audio_url);
-            await playAudio(data.audio_url);
+            try {
+              await playAudio(data.audio_url);
+            } catch (error) {
+              console.error('Failed to initiate conversation:', error);
+              statusDiv.textContent = 'Error initiating conversation: Failed to play audio after retries. Please try again.';
+            }
           } else {
             console.warn('No audio_url in response, displaying text response');
             statusDiv.textContent = 'Audio unavailable, displaying text response.';
@@ -416,6 +489,7 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('User authenticated, refreshing token...');
             idToken = await user.getIdToken(true);
             sessionStorage.setItem('idToken', idToken);
+            uid = user.uid; // Store the patient's UID
             controlButton.disabled = false;
             statusDiv.textContent = '';
             if (window.location.pathname === '/further_patient_registration' && !hasInitiatedConversation) {
@@ -489,7 +563,7 @@ document.addEventListener('DOMContentLoaded', () => {
         toggleButtonState(false);
         if (currentTranscript.trim()) {
           updateTranscript('User', currentTranscript);
-          debouncedProcessTranscript(currentTranscript);
+          continueConversation(currentTranscript);
           currentTranscript = '';
         }
       };
@@ -524,6 +598,42 @@ document.addEventListener('DOMContentLoaded', () => {
           console.log('Stopping speech recognition at:', new Date().toISOString());
           recognizing = false;
           recognition.stop();
+          if (recordingContext) {
+            try {
+              const audioBlob = await stopRecording(recordingContext);
+              recordingContext = null;
+
+              // Send the audio to the server for storage and transcription
+              const formData = new FormData();
+              formData.append('audio', audioBlob, `${sessionState.sessionId}.webm`);
+              formData.append('uid', uid);
+              formData.append('sessionId', sessionState.sessionId);
+
+              const response = await axios.post('/store-voice-input', formData, {
+                headers: {
+                  'Authorization': `Bearer ${idToken}`,
+                  'Content-Type': 'multipart/form-data'
+                }
+              });
+
+              const data = response.data;
+              if (!data.success) {
+                throw new Error(data.error || 'Failed to store voice input');
+              }
+
+              console.log('Voice input stored at:', data.gcs_uri);
+              if (data.transcript) {
+                updateTranscript('User', data.transcript);
+                await continueConversation(data.transcript);
+              } else {
+                console.warn('No transcript returned from /store-voice-input');
+                statusDiv.textContent = 'Failed to transcribe voice input. Please try again.';
+              }
+            } catch (error) {
+              console.error('Error storing voice input:', error);
+              statusDiv.textContent = 'Error storing voice input: ' + (error.message || 'Unknown error');
+            }
+          }
         } else {
           try {
             const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
@@ -534,6 +644,9 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log('Starting speech recognition at:', new Date().toISOString());
             recognizing = true;
             recognition.start();
+
+            // Start recording audio
+            recordingContext = await startRecording();
           } catch (error) {
             console.error('Start recognition error at:', new Date().toISOString(), 'Error:', error);
             statusDiv.textContent = `Failed to start recording: ${error.message}. Please ensure microphone access is granted.`;
