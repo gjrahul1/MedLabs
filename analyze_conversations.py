@@ -384,14 +384,31 @@ def analyze_conversations():
         batch.commit()
         logger.info(f"Applied {len(updates)} updates to symptom_mappings")
 
-        # Log fine-tuning data to GCS
+        # Log fine-tuning data to GCS (append to the existing file)
         if fine_tuning_data:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            gcs_path = f"fine_tuning/whisper_fine_tuning_{timestamp}.jsonl"
+            gcs_path = "fine_tuning/whisper_fine_tuning_20250427_044746.jsonl"
             blob = gcs_bucket.blob(gcs_path)
-            jsonl_content = '\n'.join(json.dumps(item) for item in fine_tuning_data)
+            
+            # Download existing data if it exists
+            existing_data = []
+            try:
+                if blob.exists():
+                    existing_content = blob.download_as_string().decode('utf-8')
+                    existing_data = [json.loads(line) for line in existing_content.splitlines() if line.strip()]
+                    logger.info(f"Loaded {len(existing_data)} existing fine-tuning records from GCS")
+            except Exception as e:
+                logger.error(f"Error loading existing fine-tuning data from GCS: {str(e)}")
+                existing_data = []
+
+            # Append new data (deduplicate by conversation_id)
+            existing_ids = {item['conversation_id'] for item in existing_data}
+            new_data = [item for item in fine_tuning_data if item['conversation_id'] not in existing_ids]
+            existing_data.extend(new_data)
+            
+            # Upload updated data
+            jsonl_content = '\n'.join(json.dumps(item) for item in existing_data)
             blob.upload_from_string(jsonl_content, content_type='application/jsonl')
-            logger.info(f"Logged fine-tuning data to GCS: {gcs_path}")
+            logger.info(f"Appended {len(new_data)} new records to GCS: {gcs_path}")
 
         # Update RL policies (contextual bandit)
         states = ['INITIAL', 'SEVERITY', 'CONFIRM_SEVERITY', 'DURATION', 'TRIGGERS', 'CONFIRM']
@@ -422,7 +439,7 @@ def analyze_conversations():
             })
             logger.info(f"Updated RL policy for state: {state}")
 
-        return {"status": "Analysis complete", "updates": len(updates), "fine_tuning_records": len(fine_tuning_data)}
+        return {"status": "Analysis complete", "updates": len(updates), "fine_tuning_records": len(new_data)}
     except Exception as e:
         logger.error(f"Error in analyze_conversations: {str(e)}")
         return {"status": "Error", "error": str(e)}
