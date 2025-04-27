@@ -18,3 +18,5 @@ werkzeug==2.3.8
 watchdog==3.0.0
 langchain-openai
 func_timeout
+openai-whisper
+hypercron
