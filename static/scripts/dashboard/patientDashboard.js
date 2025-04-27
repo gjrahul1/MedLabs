@@ -38,6 +38,73 @@
     return fetch(url, { ...options, headers, credentials: 'include' });
   }
 
+  async function playAudio(audioUrl, retries = 3, delay = 1000) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        console.log(`Attempt ${attempt} to play audio from URL:`, audioUrl);
+        const audio = new Audio(audioUrl);
+        await audio.play();
+        console.log("Audio playback started");
+        return audio;
+      } catch (error) {
+        console.error(`Attempt ${attempt} failed to play audio:`, error);
+        if (attempt === retries) {
+          throw new Error("Failed to play audio after retries: " + error.message);
+        }
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      return new Promise((resolve, reject) => {
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(chunks, { type: 'audio/webm' });
+          stream.getTracks().forEach(track => track.stop());
+          resolve(blob);
+        };
+
+        mediaRecorder.onerror = (e) => {
+          console.error("Recording error:", e);
+          stream.getTracks().forEach(track => track.stop());
+          reject(e);
+        };
+
+        mediaRecorder.start();
+        console.log("Recording started");
+      });
+    } catch (error) {
+      console.error("Error starting recording:", error);
+      throw error;
+    }
+  }
+
+  function displayMessage(sender, message) {
+    const container = document.querySelector("#home .screening-container");
+    if (!container) {
+      console.error("Screening container not found for displaying message");
+      return;
+    }
+
+    const messageDiv = document.createElement("div");
+    messageDiv.classList.add("chat-message");
+    messageDiv.classList.add(sender === "AI" ? "ai-message" : "user-message");
+    messageDiv.textContent = `${sender}: ${message}`;
+    container.appendChild(messageDiv);
+
+    // Scroll to the latest message
+    messageDiv.scrollIntoView({ behavior: "smooth" });
+  }
+
   async function loadPatientData(uid) {
     console.log("Loading patient data for UID:", uid);
     const patientRef = db.doc(`patient_registrations/${uid}`);
@@ -537,6 +604,59 @@
     }
   }
 
+  async function startConversation(uid, audioBlob = null, transcript = null) {
+    try {
+      const formData = new FormData();
+      if (audioBlob) {
+        formData.append("audio", audioBlob, "recording.webm");
+      } else if (transcript) {
+        formData.append("transcript", transcript);
+      }
+
+      console.log("Sending request to /start_conversation", audioBlob ? "with audio" : transcript ? "with transcript" : "initial request");
+
+      const response = await fetchWithAuth('/start_conversation', {
+        method: 'POST',
+        body: audioBlob || transcript ? formData : JSON.stringify({}),
+        headers: audioBlob || transcript ? {} : { 'Content-Type': 'application/json' }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server returned ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log("Response from /start_conversation:", data);
+
+      if (!data.success) {
+        throw new Error(data.error || "Conversation failed");
+      }
+
+      // Display the AI's message in the UI
+      if (data.response) {
+        displayMessage("AI", data.response);
+      }
+
+      // Attempt to play the audio if available
+      if (data.audio_url) {
+        try {
+          await playAudio(data.audio_url);
+        } catch (error) {
+          console.error("Failed to play audio, proceeding with text response:", error);
+          alert("Error initiating conversation: Failed to play audio after retries. Please try again");
+        }
+      } else {
+        console.warn("No audio_url in response from /start_conversation");
+      }
+
+      return data;
+    } catch (error) {
+      console.error("Error in startConversation:", error);
+      throw error;
+    }
+  }
+
   async function initializeDashboard() {
     try {
       const user = auth.currentUser;
@@ -604,8 +724,13 @@
         prescriptionBtn: document.getElementById("prescriptionBtn"),
         labRecordBtn: document.getElementById("labRecordBtn"),
         toggleLanguageBtn: document.getElementById("toggle-language"),
-        chatInputArea: document.querySelector(".chat-input-area")
+        chatInputArea: document.querySelector(".chat-input-area"),
+        micBtn: document.createElement("button") // Add microphone button dynamically
       };
+
+      elements.micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
+      elements.micBtn.classList.add("mic-btn");
+      elements.chatInputArea.appendChild(elements.micBtn);
 
       if (Object.values(elements).some(el => !el)) {
         console.error("Missing required DOM elements:", elements);
@@ -616,6 +741,9 @@
       let selectedCategory = "prescriptions";
       let preferredLanguage = localStorage.getItem('preferredLanguage') || 'kannada';
       let displayMode = localStorage.getItem('displayMode') || 'regional';
+      let isRecording = false;
+      let mediaRecorder = null;
+      let conversationStarted = false;
 
       elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
 
@@ -645,7 +773,7 @@
       });
 
       document.querySelectorAll('.menu-item').forEach(item => {
-        item.addEventListener('click', () => {
+        item.addEventListener('click', async () => {
           document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
           item.classList.add('active');
 
@@ -661,10 +789,26 @@
             elements.chatInputArea.style.display = 'none';
             elements.prescriptionBtn.classList.remove('active');
             elements.labRecordBtn.classList.remove('active');
+            conversationStarted = false; // Reset conversation when switching sections
           } else {
             elements.chatInputArea.style.display = 'flex';
             elements.prescriptionBtn.classList.remove('active');
             elements.labRecordBtn.classList.remove('active');
+            if (!conversationStarted) {
+              // Start the conversation when the "Home" section is active
+              try {
+                const responseData = await startConversation(uid);
+                if (responseData.conversationComplete) {
+                  conversationStarted = false;
+                  await loadInitialScreening(uid); // Refresh screening data
+                } else {
+                  conversationStarted = true;
+                }
+              } catch (error) {
+                alert("Failed to start conversation: " + error.message);
+                conversationStarted = false;
+              }
+            }
           }
         });
       });
@@ -714,6 +858,42 @@
           selectedFile = null;
         } catch (error) {
           alert("Error processing upload: " + error.message);
+        }
+      });
+
+      elements.micBtn.addEventListener("click", async () => {
+        if (!conversationStarted) {
+          alert("Please navigate to the Home section to start the conversation.");
+          return;
+        }
+
+        if (isRecording) {
+          mediaRecorder.stop();
+          elements.micBtn.classList.remove("recording");
+          isRecording = false;
+          console.log("Recording stopped");
+        } else {
+          try {
+            mediaRecorder = await startRecording();
+            elements.micBtn.classList.add("recording");
+            isRecording = true;
+            console.log("Recording started");
+
+            mediaRecorder.onstop = async () => {
+              const audioBlob = await new Promise(resolve => mediaRecorder.onstop = () => resolve(new Blob(mediaRecorder.chunks, { type: 'audio/webm' })));
+              try {
+                const responseData = await startConversation(uid, audioBlob);
+                if (responseData.conversationComplete) {
+                  conversationStarted = false;
+                  await loadInitialScreening(uid); // Refresh screening data
+                }
+              } catch (error) {
+                alert("Failed to process voice input: " + error.message);
+              }
+            };
+          } catch (error) {
+            alert("Failed to start recording: " + error.message);
+          }
         }
       });
 

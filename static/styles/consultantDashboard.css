@@ -21,6 +21,12 @@ body {
   100% { opacity: 1; transform: translateY(0); }
 }
 
+/* Spinner Animation for Loader */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 /* Sidebar */
 .sidebar {
   position: fixed;
@@ -248,6 +254,33 @@ body {
   top: 0;
   left: 0;
   opacity: 0; /* Hidden but functional for JavaScript in Patient List section */
+}
+
+/* Patient Selection Display */
+.patient-selection-display {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+#selected-patient-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: #2d3748;
+}
+
+/* Loader Styling */
+.loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #4c51bf;
+}
+
+.loader i {
+  animation: spin 1s linear infinite;
 }
 
 /* Override patient-dropdown for Reports section to make it visible */

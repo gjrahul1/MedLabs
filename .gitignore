@@ -10,8 +10,14 @@ firebase-debug.*.log*
 # Firebase cache
 .firebase/
 
+<<<<<<< HEAD
 #PyCache
 __pycache__/
+=======
+#pycache
+__pycache__/
+
+>>>>>>> 03bfb00f4e045c8fa4403a226a493a34af0b4551
 # Firebase config
 
 # Uncomment this if you'd like others to create their own Firebase project.
