@@ -1154,7 +1154,7 @@ def transcribe():
                 logger.warning(f"Failed to clean up temp files: {str(e)}")
 
 @app.route('/start_conversation', methods=['POST'])
-@token_required  # Added decorator for consistency
+@token_required
 def start_conversation():
     try:
         uid = request.user.get('uid')
@@ -1162,114 +1162,51 @@ def start_conversation():
             logger.error("No authenticated user found")
             return jsonify({"error": "No authenticated user found"}), 401
 
-        session_id = request.form.get('sessionId')
+        data = request.get_json()
+        if not data:
+            logger.error("No JSON payload provided")
+            return jsonify({"error": "No JSON payload provided"}), 400
+
+        session_id = data.get('sessionId')
+        transcript = data.get('transcript', '').strip()
+        medical_data = data.get('medicalData', {})
+        current_state = data.get('currentState', 'INITIAL')
+
         if not session_id:
             logger.error("Missing sessionId")
             return jsonify({"error": "Missing sessionId"}), 400
 
-        if 'audio' not in request.files:
-            logger.error("No audio file provided")
-            return jsonify({"error": "No audio file provided"}), 400
+        if not transcript:
+            logger.error("No transcript provided")
+            return jsonify({"error": "No transcript provided"}), 400
 
-        audio_file = request.files['audio']
-        if audio_file.filename == '':
-            logger.error("No audio file selected")
-            return jsonify({"error": "No audio file selected"}), 400
-
-        client_transcript = request.form.get('transcript', '').strip()
-        logger.debug(f"Received client transcript: '{client_transcript}'")
-
-        # Save audio temporarily
-        temp_dir = tempfile.mkdtemp()
-        webm_path = os.path.join(temp_dir, f"temp_audio_{uid}_{session_id}.webm")
-        audio_file.save(webm_path)
-        audio_size = os.path.getsize(webm_path)
-        logger.debug(f"Audio file saved: {webm_path}, size: {audio_size} bytes")
-
-        # Convert WebM to WAV
-        wav_path = os.path.join(temp_dir, f"temp_audio_{uid}_{session_id}.wav")
-        try:
-            audio = AudioSegment.from_file(webm_path, format="webm")
-            audio.export(wav_path, format="wav")
-            logger.debug(f"Converted WebM to WAV: {wav_path}")
-        except Exception as e:
-            logger.error(f"Audio conversion failed: {str(e)}", exc_info=True)
-            os.remove(webm_path)
-            if os.path.exists(wav_path):
-                os.remove(wav_path)
-            os.rmdir(temp_dir)
-            return jsonify({
-                "success": False,
-                "response": "Audio conversion failed. Please try again.",
-                "medical_data": {"symptoms": []},
-                "audio_url": None
-            }), 400
-
-        # Upload to Google Cloud Storage
-        gcs_path = f"voice_inputs/{uid}/{session_id}.webm"
-        blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(webm_path)
-        gcs_uri = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
-        logger.info(f"Uploaded audio to GCS: {gcs_uri}")
-
-        # Attempt server-side transcription
-        transcription = transcribe_audio(wav_path)
-        if "failed" in transcription.lower() or not transcription.strip():
-            logger.error(f"Server-side transcription failed: {transcription}")
-            if client_transcript:
-                logger.info(f"Falling back to client-side transcript: {client_transcript}")
-                transcription = client_transcript
-            else:
-                logger.error("No client transcript available for fallback")
-                os.remove(webm_path)
-                if os.path.exists(wav_path):
-                    os.remove(wav_path)
-                os.rmdir(temp_dir)
-                return jsonify({
-                    "success": False,
-                    "response": "Audio issue detected. Please try again.",
-                    "medical_data": {"symptoms": []},
-                    "audio_url": None
-                }), 400
-
-        # Clean up temporary files
-        os.remove(webm_path)
-        if os.path.exists(wav_path):
-            os.remove(wav_path)
-        os.rmdir(temp_dir)
+        logger.debug(f"Received transcript: '{transcript}'")
 
         # Proceed with conversation
         history = session.get('conversation_history', '')
         processed_data, status_code = process_conversation(
-            transcript=transcription, history=history, session_id=session_id
+            transcript=transcript, history=history, session_id=session_id
         )
         if status_code != 200:
             logger.error(f"Conversation processing failed: {processed_data}")
             return jsonify(processed_data), status_code
 
-        # Update session and return response
-        session['conversation_history'] = f"{history}\nPatient: {transcription}\nAgent: {processed_data['response']}"
+        # Update session
+        session['conversation_history'] = f"{history}\nPatient: {transcript}\nAgent: {processed_data['response']}"
+        session['medical_data'] = processed_data.get('medical_data', {"symptoms": []})
+        session['current_state'] = processed_data.get('next_state', current_state)
+
         return jsonify({
             "success": True,
             "response": processed_data['response'],
             "medical_data": processed_data.get('medical_data', {"symptoms": []}),
             "audio_url": processed_data.get('audio_url'),
-            "gcs_uri": gcs_uri
+            "nextState": processed_data.get('next_state', current_state)
         })
 
     except Exception as e:
         logger.error(f"Error in start_conversation: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
-    finally:
-        if 'temp_dir' in locals() and os.path.exists(temp_dir):
-            try:
-                if 'webm_path' in locals():
-                    os.remove(webm_path)
-                if 'wav_path' in locals() and os.path.exists(wav_path):
-                    os.remove(wav_path)
-                os.rmdir(temp_dir)
-            except Exception as e:
-                logger.warning(f"Cleanup failed: {str(e)}")
 
 @app.route('/add_symptom', methods=['POST'])
 @token_required

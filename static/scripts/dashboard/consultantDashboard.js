@@ -226,7 +226,10 @@
       'lung abscess': { label: 'Lungs', icon: 'fas fa-lungs', system: 'respiratory' },
       'gum inflammation': { label: 'Gums', icon: 'fas fa-tooth', system: 'dental' },
       'infection': { label: 'Infection', icon: 'fas fa-virus', system: 'systemic' },
-      'upper respiratory infection': { label: 'Respiratory', icon: 'fas fa-lungs-virus', system: 'respiratory' }
+      'upper respiratory infection': { label: 'Respiratory', icon: 'fas fa-lungs-virus', system: 'respiratory' },
+      'seizure': { label: 'Seizure', icon: 'fas fa-bolt', system: 'neurological' },
+      'cold symptoms': { label: 'Cold', icon: 'fas fa-thermometer', system: 'respiratory' },
+      'atrial fibrillation': { label: 'Heart Rhythm', icon: 'fas fa-heartbeat', system: 'cardiovascular' },
     };
     const conditions = [];
 
@@ -245,17 +248,17 @@
         }
       }
 
-      const match = line.match(/^(.+?):\s*(.*?)(\(reported\s*\d{4}-\d{2}-\d{2}\))?\.?$/i);
+      const match = line.match(/^(.+?):\s*(.*?)(\(reported\s*\d{4}-\d{2}-\d{2}\))?\.?$/i) || line.match(/^(.+?)(\(reported\s*\d{4}-\d{2}-\d{2}\))?\.?$/i);
       if (match) {
         const heading = match[1].trim();
-        const description = match[2] ? match[2].trim() : '';
-        const dateMatch = match[3] ? match[3].match(/\d{4}-\d{2}-\d{2}/) : null;
+        const description = match[2] ? match[2].trim() : (match[0].replace(match[1], '').replace(/\(reported\s*\d{4}-\d{2}-\d{2}\)/, '').trim() || '');
+        const dateMatch = match[0].match(/\d{4}-\d{2}-\d{2}/);
         const date = dateMatch ? dateMatch[0] : new Date().toISOString().split('T')[0];
         const descriptionNormalized = (heading + ' ' + description).toLowerCase().replace(/\s+/g, ' ').replace(/\bof\b/g, '').replace(/\//g, ' ').replace(/[^a-z\s]/g, '');
 
         console.log(`Processing health condition line: ${heading}`);
 
-        formattedLines.push(`<li>${heading}: ${description}${date ? ` <strong>(${date})</strong>` : ''}</li>`);
+        formattedLines.push(`<li>${heading}${description ? `: ${description}` : ''}${date ? ` <strong>(${date})</strong>` : ''}</li>`);
 
         for (const [condition, info] of Object.entries(conditionMap)) {
           const conditionNormalized = condition.toLowerCase().replace(/\s+/g, ' ');
@@ -265,7 +268,10 @@
                                    (condition === 'headache' && descriptionNormalized.includes('headaches')) ||
                                    (condition === 'gum inflammation' && descriptionNormalized.includes('gums') && descriptionNormalized.includes('inflammation')) ||
                                    (condition === 'infection' && (descriptionNormalized.includes('infection') || descriptionNormalized.includes('upper respiratory'))) ||
-                                   (condition === 'upper respiratory infection' && descriptionNormalized.includes('upper respiratory')));
+                                   (condition === 'upper respiratory infection' && descriptionNormalized.includes('upper respiratory')) ||
+                                   (condition === 'seizure' && descriptionNormalized.includes('seizure')) ||
+                                   (condition === 'cold symptoms' && descriptionNormalized.includes('cold')) ||
+                                   (condition === 'atrial fibrillation' && descriptionNormalized.includes('atrial fibrillation')));
           if (matchesCondition) {
             console.log(`Detected condition: ${condition} with severity ${severityClass}`);
             indicatorsHTML += `
@@ -311,70 +317,240 @@
       trendData[condition.name] = { labels: [], severities: [] };
     });
 
-    historicalSummaries.forEach(doc => {
-      const summary = doc.data().summary.split('\n').filter(line => line.trim());
-      const date = doc.data().timestamp ? new Date(doc.data().timestamp.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString();
+    // If there are no historical summaries, use the current summary as a single data point
+    if (historicalSummaries.empty) {
+      console.log("No historical summaries found, using current summary as a single data point");
+      const currentDate = new Date().toLocaleDateString();
       conditions.forEach(condition => {
-        let severityValue = 0;
-        summary.forEach(line => {
-          const lineLower = line.replace(/\*+/g, '').trim().toLowerCase();
-          const conditionNormalized = condition.name.toLowerCase().replace(/\s+/g, ' ');
-          const matchesCondition = lineLower.includes(conditionNormalized) ||
-                                  (condition.name === 'headache' && lineLower.includes('headaches')) ||
-                                  (condition.name === 'gum inflammation' && lineLower.includes('gums') && lineLower.includes('inflammation')) ||
-                                  (condition.name === 'infection' && (lineLower.includes('infection') || lineLower.includes('upper respiratory'))) ||
-                                  (condition.name === 'upper respiratory infection' && lineLower.includes('upper respiratory'));
-          if (matchesCondition) {
-            if (lineLower.includes('mild')) severityValue = 1;
-            else if (lineLower.includes('moderate')) severityValue = 2;
-            else if (lineLower.includes('severe')) severityValue = 3;
-          }
-        });
-        trendData[condition.name].labels.push(date);
+        trendData[condition.name].labels.push(currentDate);
+        const severityValue = condition.severity === 'mild' ? 1 : condition.severity === 'moderate' ? 2 : condition.severity === 'severe' ? 3 : 0;
         trendData[condition.name].severities.push(severityValue);
       });
-    });
+    } else {
+      historicalSummaries.forEach(doc => {
+        const summary = doc.data().summary.split('\n').filter(line => line.trim());
+        const date = doc.data().timestamp ? new Date(doc.data().timestamp.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString();
+        conditions.forEach(condition => {
+          let severityValue = 0;
+          summary.forEach(line => {
+            const lineLower = line.replace(/\*+/g, '').trim().toLowerCase();
+            const conditionNormalized = condition.name.toLowerCase().replace(/\s+/g, ' ');
+            const matchesCondition = lineLower.includes(conditionNormalized) ||
+                                    (condition.name === 'headache' && lineLower.includes('headaches')) ||
+                                    (condition.name === 'gum inflammation' && lineLower.includes('gums') && lineLower.includes('inflammation')) ||
+                                    (condition.name === 'infection' && (lineLower.includes('infection') || lineLower.includes('upper respiratory'))) ||
+                                    (condition.name === 'upper respiratory infection' && lineLower.includes('upper respiratory')) ||
+                                    (condition.name === 'seizure' && lineLower.includes('seizure')) ||
+                                    (condition.name === 'cold symptoms' && lineLower.includes('cold')) ||
+                                    (condition.name === 'atrial fibrillation' && lineLower.includes('atrial fibrillation'));
+            if (matchesCondition) {
+              if (lineLower.includes('mild')) severityValue = 1;
+              else if (lineLower.includes('moderate')) severityValue = 2;
+              else if (lineLower.includes('severe')) severityValue = 3;
+            }
+          });
+          trendData[condition.name].labels.push(date);
+          trendData[condition.name].severities.push(severityValue);
+        });
+      });
+    }
 
-    console.log("Chart data prepared");
+    console.log("Chart data prepared:", trendData);
 
     const ctx = trendChartCanvas.getContext('2d');
     const existingChart = Chart.getChart('condition-trend-chart');
     if (existingChart) {
       existingChart.destroy();
     }
-    const chartConfig = {
-      type: 'line',
-      data: {
-        labels: trendData[conditions[0]?.name]?.labels || [],
-        datasets: conditions.map(condition => ({
-          label: condition.name,
-          data: trendData[condition.name].severities,
-          borderColor: condition.severity === 'mild' ? '#48bb78' : condition.severity === 'moderate' ? '#ecc94b' : '#f56565',
-          fill: false,
-          tension: 0.1
-        }))
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          y: {
-            beginAtZero: true,
-            max: 3,
-            ticks: {
-              stepSize: 1,
-              callback: value => ['None', 'Mild', 'Moderate', 'Severe'][value]
+
+    // Check if there's any data to plot
+    const hasData = Object.values(trendData).some(data => data.severities.some(severity => severity > 0));
+
+    if (!hasData && historicalSummaries.empty) {
+      // Plot the current summary data if no historical data exists
+      const chartConfig = {
+        type: 'line',
+        data: {
+          labels: trendData[conditions[0]?.name]?.labels || [new Date().toLocaleDateString()],
+          datasets: conditions.map(condition => ({
+            label: condition.name,
+            data: trendData[condition.name].severities,
+            borderColor: condition.severity === 'mild' ? '#48bb78' : condition.severity === 'moderate' ? '#ecc94b' : condition.severity === 'severe' ? '#f56565' : '#000000',
+            backgroundColor: condition.severity === 'mild' ? 'rgba(72, 187, 120, 0.2)' : condition.severity === 'moderate' ? 'rgba(236, 201, 75, 0.2)' : condition.severity === 'severe' ? 'rgba(245, 101, 101, 0.2)' : 'rgba(0, 0, 0, 0.2)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 5,
+            pointHoverRadius: 8,
+            borderWidth: 2
+          }))
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 3,
+              ticks: {
+                stepSize: 1,
+                callback: value => ['None', 'Mild', 'Moderate', 'Severe'][value],
+                font: {
+                  size: 12
+                }
+              },
+              title: {
+                display: true,
+                text: 'Severity Level',
+                font: {
+                  size: 14
+                }
+              }
+            },
+            x: {
+              title: {
+                display: true,
+                text: 'Date',
+                font: {
+                  size: 14
+                }
+              },
+              ticks: {
+                font: {
+                  size: 12
+                }
+              }
+            }
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                font: {
+                  size: 12
+                }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const label = context.dataset.label || '';
+                  const value = context.parsed.y;
+                  const severity = ['None', 'Mild', 'Moderate', 'Severe'][value];
+                  return `${label}: ${severity}`;
+                }
+              }
+            },
+            title: {
+              display: true,
+              text: 'Severity Trend Over Time',
+              font: {
+                size: 16
+              },
+              padding: {
+                top: 10,
+                bottom: 20
+              }
             }
           }
+        }
+      };
+      new Chart(ctx, chartConfig);
+    } else if (!hasData) {
+      // Display a message if no data is available to plot
+      ctx.font = '16px Arial';
+      ctx.fillStyle = '#666';
+      ctx.textAlign = 'center';
+      ctx.fillText('No historical data available to display trends', trendChartCanvas.width / 2, trendChartCanvas.height / 2);
+    } else {
+      // Plot the graph with historical data
+      const chartConfig = {
+        type: 'line',
+        data: {
+          labels: trendData[conditions[0]?.name]?.labels || [],
+          datasets: conditions.map(condition => ({
+            label: condition.name,
+            data: trendData[condition.name].severities,
+            borderColor: condition.severity === 'mild' ? '#48bb78' : condition.severity === 'moderate' ? '#ecc94b' : condition.severity === 'severe' ? '#f56565' : '#000000',
+            backgroundColor: condition.severity === 'mild' ? 'rgba(72, 187, 120, 0.2)' : condition.severity === 'moderate' ? 'rgba(236, 201, 75, 0.2)' : condition.severity === 'severe' ? 'rgba(245, 101, 101, 0.2)' : 'rgba(0, 0, 0, 0.2)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 5,
+            pointHoverRadius: 8,
+            borderWidth: 2
+          }))
         },
-        plugins: {
-          legend: {
-            position: 'top'
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 3,
+              ticks: {
+                stepSize: 1,
+                callback: value => ['None', 'Mild', 'Moderate', 'Severe'][value],
+                font: {
+                  size: 12
+                }
+              },
+              title: {
+                display: true,
+                text: 'Severity Level',
+                font: {
+                  size: 14
+                }
+              }
+            },
+            x: {
+              title: {
+                display: true,
+                text: 'Date',
+                font: {
+                  size: 14
+                }
+              },
+              ticks: {
+                font: {
+                  size: 12
+                }
+              }
+            }
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                font: {
+                  size: 12
+                }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const label = context.dataset.label || '';
+                  const value = context.parsed.y;
+                  const severity = ['None', 'Mild', 'Moderate', 'Severe'][value];
+                  return `${label}: ${severity}`;
+                }
+              }
+            },
+            title: {
+              display: true,
+              text: 'Severity Trend Over Time',
+              font: {
+                size: 16
+              },
+              padding: {
+                top: 10,
+                bottom: 20
+              }
+            }
           }
         }
-      }
-    };
-    new Chart(ctx, chartConfig);
+      };
+      new Chart(ctx, chartConfig);
+    }
   }
 
   async function loadPrescriptions(consultantId, patientUid = null) {

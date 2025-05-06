@@ -195,22 +195,22 @@
       });
     }
 
-    async function retryUploadAudio(audioBlob, sessionId, transcript, maxRetries = 3) {
+    async function retryUploadAudio(sessionId, transcript, maxRetries = 3) {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-          console.log(`Attempt ${attempt} to upload audio to server`);
-          const formData = new FormData();
-          formData.append('audio', audioBlob, `${sessionId}.webm`);
-          formData.append('sessionId', sessionId);
-          formData.append('medicalData', JSON.stringify(sessionState.medicalData));
-          formData.append('currentState', sessionState.currentState);
-          formData.append('transcript', transcript); // Add the client-side transcript
-          console.log('Sending FormData with transcript:', transcript); // Log transcript
+          console.log(`Attempt ${attempt} to send transcript to server`);
+          const payload = {
+            sessionId: sessionId,
+            transcript: transcript,
+            medicalData: sessionState.medicalData,
+            currentState: sessionState.currentState
+          };
+          console.log('Sending payload with transcript:', transcript);
 
-          const response = await axios.post('/start_conversation', formData, {
+          const response = await axios.post('/start_conversation', payload, {
             headers: {
               'Authorization': `Bearer ${sessionStorage.getItem('idToken')}`,
-              'Content-Type': 'multipart/form-data'
+              'Content-Type': 'application/json'
             },
             timeout: 30000
           });
@@ -436,7 +436,7 @@
 
             const payload = {
               transcript: '',
-              session_id: sessionState.session_id
+              sessionId: sessionState.session_id
             };
             console.log('Sending request to /start_conversation with payload:', JSON.stringify(payload));
 
@@ -579,7 +579,7 @@
           }
           if (transcript.trim()) {
             console.log('Recognized transcript at:', new Date().toISOString(), 'Transcript:', transcript);
-            currentTranscript += transcript;
+            currentTranscript = transcript.trim();
           } else {
             console.warn('No transcript recognized');
           }
@@ -627,22 +627,33 @@
 
               console.log('Audio recorded successfully, size:', audioBlob.size, 'bytes');
 
-              const audioBase64 = await blobToBase64(audioBlob);
-              localStorage.setItem(`patient_audio_${sessionState.session_id}`, audioBase64);
-              console.log('Audio temporarily stored in localStorage');
+              // Wait for SpeechRecognition to complete
+              await new Promise(resolve => {
+                recognition.onend = () => {
+                  console.log('Speech recognition ended, resolving');
+                  resolve();
+                };
+                setTimeout(resolve, 2000); // Timeout after 2 seconds
+              });
+
+              if (!currentTranscript.trim()) {
+                console.warn('No transcript captured after recognition');
+                statusDiv.textContent = 'No speech detected. Please try speaking again.';
+                transcriptPanel.classList.remove('processing');
+                return;
+              }
 
               transcriptPanel.classList.add('processing');
               const startTime = Date.now();
-              console.log('Sending audio to /start_conversation at:', new Date().toISOString());
+              console.log('Sending transcript to /start_conversation at:', new Date().toISOString());
 
               let data;
               try {
-                data = await retryUploadAudio(audioBlob, sessionState.session_id, currentTranscript);
-                localStorage.removeItem(`patient_audio_${sessionState.session_id}`);
-                console.log('Audio successfully uploaded, cleared from localStorage');
+                data = await retryUploadAudio(sessionState.session_id, currentTranscript);
+                console.log('Transcript successfully sent');
               } catch (error) {
-                console.error('Failed to upload audio after retries:', error.response ? error.response.data : error.message);
-                statusDiv.textContent = 'Error uploading audio: ' + (error.response ? (error.response.data.error || error.message) : error.message) + '. Audio saved locally, will retry on next interaction.';
+                console.error('Failed to send transcript after retries:', error.response ? error.response.data : error.message);
+                statusDiv.textContent = 'Error sending transcript: ' + (error.response ? (error.response.data.error || error.message) : error.message) + '. Please try again.';
                 transcriptPanel.classList.remove('processing');
                 return;
               }
@@ -651,23 +662,7 @@
               console.log(`Received response from /start_conversation after ${endTime - startTime}ms at:`, new Date().toISOString());
               console.log('Full server response:', JSON.stringify(data, null, 2));
 
-              if (data.gcs_uri) {
-                console.log('Patient audio stored at:', data.gcs_uri);
-              } else {
-                console.error('No gcs_uri in response. Audio upload failed.');
-                statusDiv.textContent = 'Error: Audio upload failed, but audio is saved locally. Please try again.';
-              }
-
-              if (currentTranscript.trim()) {
-                updateTranscript('User', currentTranscript);
-              } else {
-                console.warn('No transcript captured from speech recognition, using server transcript if available');
-                if (data.transcript) {
-                  updateTranscript('User', data.transcript);
-                } else {
-                  updateTranscript('User', 'Speech not recognized');
-                }
-              }
+              updateTranscript('User', currentTranscript);
               updateTranscript('AI', data.response);
 
               sessionState.medicalData = data.medical_data;
@@ -700,11 +695,11 @@
                   console.log('Executing redirect to:', data.redirect);
                   window.location.href = data.redirect;
                 }, 500);
-              } else if (data.response.includes("You have been assigned to")) {
-                console.log('Doctor assignment detected in response, forcing redirect to dashboard');
+              } else if (data.redirect && data.response.includes("You have been assigned to")) {
+                console.log('Doctor assignment detected in response, forcing redirect to:', data.redirect);
                 setTimeout(() => {
-                  console.log('Executing forced redirect to: /dashboard');
-                  window.location.href = '/dashboard';
+                  console.log('Executing forced redirect to:', data.redirect);
+                  window.location.href = data.redirect;
                 }, 500);
               } else {
                 console.log('Redirect or conversationComplete missing:', { redirect: data.redirect, conversationComplete: data.conversationComplete });
@@ -752,23 +747,7 @@
         });
 
         async function retryStoredAudio() {
-          const storedAudio = localStorage.getItem(`patient_audio_${sessionState.session_id}`);
-          if (storedAudio) {
-            console.log('Found locally stored audio, attempting to upload');
-            try {
-              const audioBlob = base64ToBlob(storedAudio, 'audio/webm');
-              const data = await retryUploadAudio(audioBlob, sessionState.session_id, ''); // No transcript for stored audio
-              localStorage.removeItem(`patient_audio_${sessionState.session_id}`);
-              console.log('Successfully uploaded locally stored audio, cleared from localStorage');
-              updateTranscript('AI', data.response);
-              if (data.audio_url) {
-                await playAudio(data.audio_url);
-              }
-            } catch (error) {
-              console.error('Failed to upload locally stored audio:', error.response ? error.response.data : error.message);
-              statusDiv.textContent = 'Failed to upload locally stored audio. Please try again later.';
-            }
-          }
+          console.log('retryStoredAudio skipped: audio functionality removed');
         }
 
         retryStoredAudio();
