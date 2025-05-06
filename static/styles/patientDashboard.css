@@ -573,6 +573,10 @@ body {
   backdrop-filter: blur(10px);
 }
 
+.chat-input-area.hidden {
+  display: none;
+}
+
 .chat-box {
   display: flex;
   align-items: center;
@@ -646,25 +650,6 @@ body {
   color: #2d3748;
   margin-left: auto;
   border-top-right-radius: 0;
-}
-
-/* Microphone Button */
-.mic-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 1.5em;
-  color: #555;
-  margin-left: 10px;
-  transition: color 0.3s;
-}
-
-.mic-btn:hover {
-  color: #000;
-}
-
-.mic-btn.recording {
-  color: #ff0000;
 }
 
 /* Hide file input */

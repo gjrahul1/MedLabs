@@ -110,6 +110,7 @@ from gtts import gTTS
 from datetime import datetime
 import traceback
 import httpx
+from pydub import AudioSegment
 import asyncio
 import hashlib
 from func_timeout import FunctionTimedOut
@@ -285,10 +286,12 @@ def transcribe_audio(audio_path, language="en", retries=3):
     while attempt < retries:
         try:
             logger.debug(f"Transcribing audio: {audio_path} (language: {language}, attempt: {attempt + 1})")
+            audio_size = os.path.getsize(audio_path)
+            logger.debug(f"Audio file size: {audio_size} bytes")
+            if audio_size < 1024:
+                logger.error(f"Audio file too small: {audio_size} bytes")
+                return "Audio file too small or corrupted"
             with open(audio_path, "rb") as audio_file:
-                audio_size = os.path.getsize(audio_path)
-                if audio_size < 1024:
-                    return "Audio file too small or corrupted"
                 result = client.audio.transcriptions.create(
                     model="whisper-1",
                     file=audio_file,
@@ -299,204 +302,20 @@ def transcribe_audio(audio_path, language="en", retries=3):
                 logger.debug(f"Transcribed text: {transcribed_text}")
                 return transcribed_text
         except httpx.HTTPStatusError as e:
+            logger.error(f"Transcription HTTP error {e.response.status_code}: {e.response.text}", exc_info=True)
             if e.response.status_code in [429, 500, 502, 503]:
                 attempt += 1
                 time.sleep(2 ** attempt)
                 continue
-            logger.error(f"Transcription failed with HTTP {e.response.status_code}: {e.response.text}")
-            return f"Transcription failed: {e.response.text}"
+            return f"Transcription failed: HTTP {e.response.status_code} - {e.response.text}"
         except Exception as e:
-            logger.error(f"Transcription error: {str(e)}")
+            logger.error(f"Transcription error: {str(e)}", exc_info=True)
             attempt += 1
             if attempt < retries:
                 time.sleep(2 ** attempt)
             else:
                 return f"Transcription failed: {str(e)}"
     return "Transcription failed after multiple attempts"
-
-def synthesize_audio(text, language="en", session_id=None):
-    try:
-        logger.debug(f"Synthesizing audio: {text[:50]}... (language: {language})")
-        if not text or not text.strip():
-            logger.warning("TTS input is empty")
-            return None
-
-        # Generate cache key
-        cache_key = hashlib.md5((text + language).encode()).hexdigest()
-        doc_ref = db.collection('tts_cache').document(cache_key)
-        
-        # Check Firestore cache (synchronous)
-        doc = doc_ref.get()
-        if doc.exists:
-            cached = doc.to_dict()
-            gcs_url = cached.get('gcs_url')
-            logger.info(f"Retrieved cached TTS for: {text[:50]}")
-            return gcs_url  # Return cached URL without validation
-
-        # Generate TTS
-        tts = gTTS(text=text, lang=language, slow=False)
-        temp_file = os.path.join(tempfile.gettempdir(), f"temp_tts_{cache_key}.mp3")
-        tts.save(temp_file)
-        audio_size = os.path.getsize(temp_file)
-        if audio_size < 1024:
-            logger.error(f"Generated audio {temp_file} too small: {audio_size} bytes")
-            os.remove(temp_file)
-            raise ValueError(f"Generated audio file is too small: {audio_size} bytes")
-
-        # Upload to GCS (bucket is publicly readable via IAM)
-        gcs_path = f"tts/{cache_key}.mp3"
-        blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(temp_file)
-        # Construct public URL manually without accessing metadata
-        gcs_url = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
-        os.remove(temp_file)
-
-        # Cache metadata in Firestore (synchronous)
-        doc_ref.set({
-            'text': text,
-            'language': language,
-            'gcs_url': gcs_url,
-            'timestamp': firestore.SERVER_TIMESTAMP
-        })
-        logger.info(f"Uploaded TTS to GCS and cached in Firestore: {gcs_url}")
-        return gcs_url
-    except Exception as e:
-        logger.error(f"Audio synthesis error: {str(e)}")
-        if 'temp_file' in locals() and os.path.exists(temp_file):
-            os.remove(temp_file)
-        return None
-
-def generate_consultant_id():
-    counter_ref = db.collection('counters').document('consultant_id')
-    @firestore.transactional
-    def transactional_generate(transaction):
-        snapshot = counter_ref.get(transaction=transaction)
-        next_id = snapshot.get('next_id') if snapshot.exists else 1
-        transaction.set(counter_ref, {'next_id': next_id + 1})
-        return next_id
-    transaction = db.transaction()
-    return f'DR{transactional_generate(transaction):04d}'
-
-def calculate_age(dob_str):
-    try:
-        dob = datetime.strptime(dob_str, "%d-%m-%Y")
-        today = datetime(2025, 4, 26)
-        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-        return age
-    except ValueError as e:
-        logger.error(f"Failed to parse DOB '{dob_str}': {str(e)}")
-        return None
-
-def validate_doctor_mapping(symptoms, assigned_specialty):
-    try:
-        # Prepare input for the doctor mapping validation chain
-        validation_input = {
-            "symptoms": ", ".join(symptoms),
-            "assigned_specialty": assigned_specialty
-        }
-        # Run the chain synchronously
-        validation_response = doctor_mapping_validation_chain.invoke(validation_input)
-        raw_response = validation_response.content
-        cleaned_response = raw_response.strip().lstrip("```json").rstrip("```")
-        validation_data = json.loads(cleaned_response)
-        return validation_data
-    except Exception as e:
-        logger.error(f"Error validating doctor mapping: {str(e)}")
-        return {
-            "is_correct": True,
-            "correct_specialty": assigned_specialty,
-            "reasoning": "Validation failed, defaulting to assigned specialty."
-        }
-
-def fetch_available_doctors(specialty):
-    try:
-        specialty = specialty.lower()
-        doctors_list = [
-            {"consultant_id": doc["consultant_id"], "full_name": doc["full_name"], "specialty": doc["specialty"]}
-            for doc in DOCTORS if doc["specialty"] == specialty and doc["availability"]
-        ]
-        if not doctors_list:
-            logger.warning(f"No doctors found for specialty: {specialty}")
-        return doctors_list
-    except Exception as e:
-        logger.error(f"Error fetching doctors: {str(e)}")
-        return []
-
-def assign_doctor(medical_data):
-    symptoms = medical_data.get('symptoms', [])
-    severity = medical_data.get('severity', [''])
-    duration = medical_data.get('duration', [''])
-    additional_symptoms = symptoms[1:] if len(symptoms) > 1 else []
-
-    if not symptoms:
-        return [], "general medicine"
-
-    # Determine initial specialty
-    specialty = determine_specialty(symptoms, severity, duration, additional_symptoms)
-    
-    # Validate the specialty
-    validation_result = validate_doctor_mapping(symptoms, specialty)
-    
-    # Update specialty if validation indicates it's incorrect
-    if not validation_result.get("is_correct", True):
-        specialty = validation_result.get("correct_specialty", specialty)
-        logger.info(f"Specialty updated to {specialty} based on validation for symptoms: {', '.join(symptoms)}")
-    
-    # Fetch available doctors for the specialty
-    doctors_list = fetch_available_doctors(specialty)
-    
-    # Fallback to general medicine if no doctors are available
-    if not doctors_list:
-        specialty = "general medicine"
-        doctors_list = fetch_available_doctors(specialty)
-        logger.info(f"No doctors available for initial specialty; defaulted to {specialty}")
-
-    return doctors_list, specialty
-
-@app.route('/store-voice-input', methods=['POST'])
-@token_required
-def store_voice_input():
-    try:
-        # Get the authenticated user's UID
-        uid = request.user.get('uid')
-        if not uid:
-            return jsonify({"error": "No authenticated user found"}), 401
-
-        # Get the session ID and audio file from the request
-        if 'audio' not in request.files:
-            return jsonify({"error": "No audio file provided"}), 400
-
-        audio_file = request.files['audio']
-        session_id = request.form.get('sessionId')
-        if not session_id:
-            return jsonify({"error": "Missing sessionId"}), 400
-
-        # Create a temporary file to store the audio
-        temp_file = os.path.join(tempfile.gettempdir(), f"voice_input_{session_id}.webm")
-        audio_file.save(temp_file)
-
-        # Transcribe the audio using Whisper
-        model = whisper.load_model("base")
-        result = model.transcribe(temp_file)
-        transcript = result["text"]
-        logger.info(f"Transcribed voice input: {transcript}")
-
-        # Upload to GCS under voice_inputs/<uid>/<session_id>.webm
-        gcs_path = f"voice_inputs/{uid}/{session_id}.webm"
-        blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(temp_file)
-        gcs_uri = f"gs://{bucket.name}/{gcs_path}"
-        logger.info(f"Uploaded voice input to GCS: {gcs_uri}")
-
-        # Clean up the temporary file
-        os.remove(temp_file)
-
-        return jsonify({"success": True, "transcript": transcript, "gcs_uri": gcs_uri})
-    except Exception as e:
-        logger.error(f"Error storing voice input: {str(e)}")
-        if 'temp_file' in locals() and os.path.exists(temp_file):
-            os.remove(temp_file)
-        return jsonify({"error": str(e)}), 500
     
 def process_conversation(audio_path=None, transcript=None, history="", session_id=None):
     try:
@@ -513,29 +332,43 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
         session['asked_questions'] = asked_questions
 
         current_query = session.get('current_query', {"symptom": None, "field": None, "interpreted_severity": None, "raw_severity": None})
-        has_initial_prompt_been_sent = session.get('has_initial_prompt_been_sent', False)
 
         conversation_id = session.get('conversation_id', secrets.token_hex(16))
         session['conversation_id'] = conversation_id
 
+        if session_id:
+            convo_query = db.collection('conversations').where('session_id', '==', session_id).where('state', '==', 'INITIAL').limit(1).get()
+            if convo_query:
+                logger.info(f"Conversation already initiated for session_id: {session_id}")
+                intro = "What symptoms are you experiencing?"
+                if not audio_path and not transcript:
+                    audio_url = synthesize_audio(intro, language, session_id)
+                    return {"success": True, "response": intro, "medical_data": medical_data, "audio_url": audio_url, "already_initiated": True}, 200
+
         if audio_path:
+            uid = request.user.get('uid')
+            gcs_path = f"voice_inputs/{uid}/{session_id}.webm"
+            blob = bucket.blob(gcs_path)
+            blob.upload_from_filename(audio_path)
+            gcs_uri = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
+            logger.info(f"Uploaded audio to GCS: {gcs_uri}")
+
             transcription = transcribe_audio(audio_path, language)
-            if "failed" in transcription.lower():
+            if "failed" in transcription.lower() or "too small" in transcription.lower():
+                logger.error(f"Transcription failed: {transcription}")
                 return {"success": False, "response": "Audio issue detected. Please try again.", "medical_data": medical_data, "audio_url": None}, 400
             normalized_transcription = normalize_symptom(transcription)
         elif transcript:
             transcription = transcript
             normalized_transcription = normalize_symptom(transcript)
         else:
-            if has_initial_prompt_been_sent:
-                return {"success": True, "response": "Please provide your symptoms to continue.", "medical_data": medical_data, "audio_url": None, "already_initiated": True}, 200
             intro = "What symptoms are you experiencing?"
             audio_url = synthesize_audio(intro, language, session_id)
             session['current_state'] = "INITIAL"
-            session['has_initial_prompt_been_sent'] = True
             db.collection('conversations').add({
                 'conversation_id': conversation_id,
                 'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                'session_id': session_id,
                 'transcription': '',
                 'normalized_transcription': '',
                 'state': "INITIAL",
@@ -565,18 +398,18 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
         needs_clarification = symptom_extraction_data.get("needs_clarification", False)
         clarification_message = symptom_extraction_data.get("clarification_message", "Could you please clarify your symptoms?")
 
-        # Calculate reward
         reward = 0
         if needs_clarification:
-            reward = 0  # Neutral for clarification
+            reward = 0
         elif extracted_symptoms and current_state == "INITIAL":
-            reward = 2 if len(extracted_symptoms) > 1 else 1  # Higher for multi-symptom clarity
+            reward = 2 if len(extracted_symptoms) > 1 else 1
 
         if needs_clarification:
             audio_url = synthesize_audio(clarification_message, language, session_id)
             db.collection('conversations').add({
                 'conversation_id': conversation_id,
                 'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                'session_id': session_id,
                 'transcription': transcription,
                 'normalized_transcription': normalized_transcription,
                 'state': current_state,
@@ -596,6 +429,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                 db.collection('conversations').add({
                     'conversation_id': conversation_id,
                     'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                    'session_id': session_id,
                     'transcription': transcription,
                     'normalized_transcription': normalized_transcription,
                     'state': current_state,
@@ -717,6 +551,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
             db.collection('conversations').add({
                 'conversation_id': conversation_id,
                 'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                'session_id': session_id,
                 'transcription': transcription,
                 'normalized_transcription': normalized_transcription,
                 'state': current_state,
@@ -736,6 +571,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
             db.collection('conversations').add({
                 'conversation_id': conversation_id,
                 'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                'session_id': session_id,
                 'transcription': transcription,
                 'normalized_transcription': normalized_transcription,
                 'state': current_state,
@@ -761,7 +597,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                 is_repeat = True
                 reward = -1
             elif next_state != current_state and not is_repeat:
-                reward = 1  # Reward for state progression
+                reward = 1
 
         # Handle CONFIRM state
         if current_state == "CONFIRM":
@@ -775,6 +611,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                     db.collection('conversations').add({
                         'conversation_id': conversation_id,
                         'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                        'session_id': session_id,
                         'transcription': transcription,
                         'normalized_transcription': normalized_transcription,
                         'state': current_state,
@@ -843,6 +680,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                     db.collection('conversations').add({
                         'conversation_id': conversation_id,
                         'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                        'session_id': session_id,
                         'transcription': transcription,
                         'normalized_transcription': normalized_transcription,
                         'state': current_state,
@@ -875,7 +713,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                 asked_questions[symptom] = {"severity": False, "duration": False, "triggers": False}
             if idx < len(medical_data["severity"]):
                 severity = medical_data["severity"][idx]
-                if severity is not None:  # Check for None
+                if severity is not None:
                     severity = severity.lower()
                     if severity.isdigit():
                         num = int(severity)
@@ -883,9 +721,9 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                         severity = medical_data["severity"][idx]
                     asked_questions[symptom]["severity"] = severity in ["mild", "moderate", "severe"]
                 else:
-                    asked_questions[symptom]["severity"] = False  # Severity not provided yet
+                    asked_questions[symptom]["severity"] = False
             else:
-                asked_questions[symptom]["severity"] = False  # No severity data available
+                asked_questions[symptom]["severity"] = False
             asked_questions[symptom]["duration"] = bool(idx < len(medical_data["duration"]) and medical_data["duration"][idx].strip())
             asked_questions[symptom]["triggers"] = bool(idx < len(medical_data["triggers"]) and medical_data["triggers"][idx])
 
@@ -910,6 +748,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                     db.collection('conversations').add({
                         'conversation_id': conversation_id,
                         'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                        'session_id': session_id,
                         'transcription': transcription,
                         'normalized_transcription': normalized_transcription,
                         'state': current_state,
@@ -928,6 +767,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                     db.collection('conversations').add({
                         'conversation_id': conversation_id,
                         'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                        'session_id': session_id,
                         'transcription': transcription,
                         'normalized_transcription': normalized_transcription,
                         'state': current_state,
@@ -946,6 +786,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                     db.collection('conversations').add({
                         'conversation_id': conversation_id,
                         'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                        'session_id': session_id,
                         'transcription': transcription,
                         'normalized_transcription': normalized_transcription,
                         'state': current_state,
@@ -965,6 +806,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
             db.collection('conversations').add({
                 'conversation_id': conversation_id,
                 'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+                'session_id': session_id,
                 'transcription': transcription,
                 'normalized_transcription': normalized_transcription,
                 'state': current_state,
@@ -981,6 +823,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
         db.collection('conversations').add({
             'conversation_id': conversation_id,
             'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
+            'session_id': session_id,
             'transcription': transcription,
             'normalized_transcription': normalized_transcription,
             'state': current_state,
@@ -1123,7 +966,6 @@ def login():
     except Exception as e:
         return jsonify({"error": "Login failed", "details": str(e)}), 500
 
-@app.route('/check-auth', methods=['GET'])
 @app.route('/check-auth', methods=['GET'])
 def check_auth():
     auth_header = request.headers.get('Authorization')
@@ -1316,75 +1158,55 @@ def transcribe():
 def start_conversation():
     try:
         uid = request.user.get('uid')
+        if not uid:
+            logger.error("No authenticated user found")
+            return jsonify({"error": "No authenticated user found"}), 401
+
+        data = request.get_json()
+        if not data:
+            logger.error("No JSON payload provided")
+            return jsonify({"error": "No JSON payload provided"}), 400
+
+        session_id = data.get('sessionId')
+        transcript = data.get('transcript', '').strip()
+        medical_data = data.get('medicalData', {})
+        current_state = data.get('currentState', 'INITIAL')
+
+        if not session_id:
+            logger.error("Missing sessionId")
+            return jsonify({"error": "Missing sessionId"}), 400
+
+        if not transcript:
+            logger.error("No transcript provided")
+            return jsonify({"error": "No transcript provided"}), 400
+
+        logger.debug(f"Received transcript: '{transcript}'")
+
+        # Proceed with conversation
         history = session.get('conversation_history', '')
-
-        audio_file = None  # Initialize audio_file to None
-        transcript = None  # Initialize transcript to None
-        if request.is_json:
-            data = request.get_json()
-            transcript = data.get('transcript', '')
-            processed_data, status_code = process_conversation(transcript=transcript, history=history)
-        else:
-            if 'audio' not in request.files:
-                return jsonify({"error": "No audio file provided"}), 400
-            audio_file = request.files['audio']
-            temp_dir = tempfile.mkdtemp()
-            audio_path = os.path.join(temp_dir, f"temp_audio_{uid}.mp3")
-            audio_file.save(audio_path)
-            processed_data, status_code = process_conversation(audio_path, history)
-
+        processed_data, status_code = process_conversation(
+            transcript=transcript, history=history, session_id=session_id
+        )
         if status_code != 200:
+            logger.error(f"Conversation processing failed: {processed_data}")
             return jsonify(processed_data), status_code
 
-        medical_data = processed_data.get('medical_data')
-        expected_keys = ["symptoms", "severity", "duration", "triggers"]
-        for key in expected_keys:
-            if key not in medical_data or not isinstance(medical_data[key], list):
-                medical_data[key] = []
+        # Update session
+        session['conversation_history'] = f"{history}\nPatient: {transcript}\nAgent: {processed_data['response']}"
+        session['medical_data'] = processed_data.get('medical_data', {"symptoms": []})
+        session['current_state'] = processed_data.get('next_state', current_state)
 
-        # Set patient_input only if transcript or audio_file is provided
-        patient_input = None
-        if transcript is not None and transcript.strip():
-            patient_input = transcript
-        elif audio_file is not None:
-            patient_input = audio_file.filename.split('.')[0]
+        return jsonify({
+            "success": True,
+            "response": processed_data['response'],
+            "medical_data": processed_data.get('medical_data', {"symptoms": []}),
+            "audio_url": processed_data.get('audio_url'),
+            "nextState": processed_data.get('next_state', current_state)
+        })
 
-        # Update conversation history only if there's patient input
-        if patient_input:
-            session['conversation_history'] = f"{history}\nPatient: {patient_input}\nAgent: {processed_data['response']}"
-        else:
-            session['conversation_history'] = f"{history}\nAgent: {processed_data['response']}"
-
-        if processed_data.get('conversationComplete', False):
-            medical_data['uid'] = uid
-            medical_data['patient_name'] = session.get('user_info', {}).get('full_name', 'Unknown')
-            doc_ref = db.collection('initial_screenings').document(f'initial_screening_{uid}')
-            doc_snap = doc_ref.get()
-            medical_data['consultant_id'] = doc_snap.to_dict().get('consultant_id') if doc_snap.exists else None
-
-            doc_ref = db.collection('medical_data').document(f"{uid}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-            doc_ref.set({'medical_data': medical_data})
-
-        # Log the response to verify audio_url
-        response_data = {
-            'success': True,
-            'response': processed_data['response'],
-            'medical_data': medical_data,
-            'audio_url': processed_data.get('audio_url'),
-            'redirect': processed_data.get('redirect', '/dashboard')
-        }
-        logger.debug(f"Returning response from /start_conversation: {response_data}")
-        return jsonify(response_data)
     except Exception as e:
-        logger.error(f"Start conversation error: {str(e)}")
+        logger.error(f"Error in start_conversation: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
-    finally:
-        if 'temp_dir' in locals() and os.path.exists(temp_dir):
-            try:
-                os.remove(audio_path)
-                os.rmdir(temp_dir)
-            except Exception as e:
-                logger.warning(f"Failed to clean up temp files: {str(e)}")
 
 @app.route('/add_symptom', methods=['POST'])
 @token_required

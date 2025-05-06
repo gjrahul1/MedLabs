@@ -38,73 +38,6 @@
     return fetch(url, { ...options, headers, credentials: 'include' });
   }
 
-  async function playAudio(audioUrl, retries = 3, delay = 1000) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        console.log(`Attempt ${attempt} to play audio from URL:`, audioUrl);
-        const audio = new Audio(audioUrl);
-        await audio.play();
-        console.log("Audio playback started");
-        return audio;
-      } catch (error) {
-        console.error(`Attempt ${attempt} failed to play audio:`, error);
-        if (attempt === retries) {
-          throw new Error("Failed to play audio after retries: " + error.message);
-        }
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  async function startRecording() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      const chunks = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      return new Promise((resolve, reject) => {
-        mediaRecorder.onstop = () => {
-          const blob = new Blob(chunks, { type: 'audio/webm' });
-          stream.getTracks().forEach(track => track.stop());
-          resolve(blob);
-        };
-
-        mediaRecorder.onerror = (e) => {
-          console.error("Recording error:", e);
-          stream.getTracks().forEach(track => track.stop());
-          reject(e);
-        };
-
-        mediaRecorder.start();
-        console.log("Recording started");
-      });
-    } catch (error) {
-      console.error("Error starting recording:", error);
-      throw error;
-    }
-  }
-
-  function displayMessage(sender, message) {
-    const container = document.querySelector("#home .screening-container");
-    if (!container) {
-      console.error("Screening container not found for displaying message");
-      return;
-    }
-
-    const messageDiv = document.createElement("div");
-    messageDiv.classList.add("chat-message");
-    messageDiv.classList.add(sender === "AI" ? "ai-message" : "user-message");
-    messageDiv.textContent = `${sender}: ${message}`;
-    container.appendChild(messageDiv);
-
-    // Scroll to the latest message
-    messageDiv.scrollIntoView({ behavior: "smooth" });
-  }
-
   async function loadPatientData(uid) {
     console.log("Loading patient data for UID:", uid);
     const patientRef = db.doc(`patient_registrations/${uid}`);
@@ -113,13 +46,13 @@
       if (!patientSnap.exists) {
         console.error("UID unmatched in patient_registrations");
         alert("UID unmatched in patient records!");
-        return;
+        return null;
       }
       const patientData = patientSnap.data();
       console.log("Patient data fetched from Firestore:", patientData);
 
       const patientIdElement = document.getElementById("patient-id");
-      const nextVisitElement = document.getElementById("patient-id");
+      const nextVisitElement = document.getElementById("next-visit");
       const consultantNameElement = document.getElementById("consultant-name");
       const headerTitle = document.querySelector(".dashboard-header h1");
 
@@ -130,7 +63,7 @@
           consultantNameElement: !!consultantNameElement,
           headerTitle: !!headerTitle
         });
-        return;
+        return patientData;
       }
 
       patientIdElement.textContent = uid || "N/A";
@@ -156,10 +89,17 @@
       headerTitle.textContent = `${getGreeting()}, ${patientData.full_name || 'Patient'}!`;
 
       if (!patientData.consultant_id) {
-        document.getElementById("doctor-notification").style.display = "block";
+        const doctorNotification = document.getElementById("doctor-notification");
+        if (doctorNotification) doctorNotification.style.display = "block";
+      } else {
+        const doctorNotification = document.getElementById("doctor-notification");
+        if (doctorNotification) doctorNotification.style.display = "none";
       }
+
+      return patientData;
     } catch (error) {
       console.error("Error loading patient data:", error);
+      return null;
     }
   }
 
@@ -321,39 +261,32 @@
         let regionalSummary = data.summary || 'No summary available';
         console.log(`Before removing markers for UID ${uid}:`, regionalSummary);
 
-        // Remove "```markdown" or "```" markers using a more robust approach
         regionalSummary = regionalSummary.replace(/^(?:\s*```markdown\s*[\r\n]*|```[\r\n]*)([\s\S]*?)(?:[\r\n]*```)$/gi, '$1').trim();
 
         console.log(`After removing markers for UID ${uid}:`, regionalSummary);
 
-        // Split the summary into lines and ensure bullet points are formatted correctly
         let lines = regionalSummary.split('\n').map(line => line.trim());
         let formattedLines = [];
         let inList = false;
         for (let i = 0; i < lines.length; i++) {
           let line = lines[i];
-          // Skip empty lines
           if (!line) {
             formattedLines.push(line);
             continue;
           }
-          // Skip lines that are just "```" or "```markdown"
           if (line.match(/^```(?:markdown)?$/i)) {
             continue;
           }
-          // Preserve greeting and introduction lines
           if (line.startsWith('Dear') || line.match(/^ಪ್ರೀತಿಯ/) || line.match(/^உங்கள்/) || line.match(/^ನಿಮ್ಮ/) || line.match(/^Here's a summary/)) {
             formattedLines.push(line);
             continue;
           }
-          // Detect potential bullet points (e.g., lines with bolded text followed by a sentence)
           if (!line.startsWith('-') && line.match(/\*\*.*?\*\*/)) {
             line = `- ${line}`;
             inList = true;
           } else if (line.startsWith('-')) {
             inList = true;
           } else if (inList) {
-            // If we're in a list and the line doesn't start with '-', end the list
             inList = false;
           }
           formattedLines.push(line);
@@ -375,7 +308,6 @@
           let formattedHTML = '';
           let inList = false;
           for (const line of lines) {
-            // Skip lines that are just "```" or "```markdown"
             if (line.match(/^```(?:markdown)?$/i)) {
               continue;
             }
@@ -590,75 +522,25 @@
       if (!response.ok) {
         throw new Error(`Server returned ${response.status}: ${data.error || 'Unknown error'}`);
       }
-      if (data.success) {
-        localStorage.setItem('preferredLanguage', languageText);
-        alert(`${category === 'prescriptions' ? 'Prescription' : 'Lab Record'} processed successfully!`);
-        category === "prescriptions" ? await loadPrescriptions(uid) : await loadLabRecords(uid);
-      } else {
+      if (!data.success) {
         throw new Error(data.error || "Processing failed");
       }
-    } catch (error) {
-      console.error("Error sending data to backend:", error);
-      alert("Failed to process: " + error.message);
-      throw error;
-    }
-  }
-
-  async function startConversation(uid, audioBlob = null, transcript = null) {
-    try {
-      const formData = new FormData();
-      if (audioBlob) {
-        formData.append("audio", audioBlob, "recording.webm");
-      } else if (transcript) {
-        formData.append("transcript", transcript);
-      }
-
-      console.log("Sending request to /start_conversation", audioBlob ? "with audio" : transcript ? "with transcript" : "initial request");
-
-      const response = await fetchWithAuth('/start_conversation', {
-        method: 'POST',
-        body: audioBlob || transcript ? formData : JSON.stringify({}),
-        headers: audioBlob || transcript ? {} : { 'Content-Type': 'application/json' }
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server returned ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json();
-      console.log("Response from /start_conversation:", data);
-
-      if (!data.success) {
-        throw new Error(data.error || "Conversation failed");
-      }
-
-      // Display the AI's message in the UI
-      if (data.response) {
-        displayMessage("AI", data.response);
-      }
-
-      // Attempt to play the audio if available
-      if (data.audio_url) {
-        try {
-          await playAudio(data.audio_url);
-        } catch (error) {
-          console.error("Failed to play audio, proceeding with text response:", error);
-          alert("Error initiating conversation: Failed to play audio after retries. Please try again");
-        }
-      } else {
-        console.warn("No audio_url in response from /start_conversation");
-      }
-
       return data;
     } catch (error) {
-      console.error("Error in startConversation:", error);
+      console.error("Error sending data to backend:", error);
       throw error;
     }
   }
 
   async function initializeDashboard() {
     try {
+      console.log("Starting dashboard initialization");
+      
+      // Early check for Firebase services
+      if (!window.auth || !window.db || !window.storage) {
+        throw new Error("Firebase services not initialized");
+      }
+
       const user = auth.currentUser;
       if (!user) {
         console.log("No user authenticated, redirecting to login");
@@ -669,14 +551,15 @@
       const uid = user.uid;
       console.log("User authenticated with UID:", uid);
 
-      const patientRef = db.doc(`patient_registrations/${uid}`);
-      const patientSnap = await patientRef.get();
-      if (patientSnap.exists && !patientSnap.data().consultant_id) {
-        document.getElementById("registration-prompt").style.display = "block";
+      const patientData = await loadPatientData(uid);
+      if (!patientData) {
+        console.error("Failed to load patient data, aborting dashboard initialization");
+        return;
       }
 
+      const hasDoctor = patientData.consultant_id != null;
+
       await Promise.all([
-        loadPatientData(uid),
         loadInitialScreening(uid),
         loadPrescriptions(uid),
         loadLabRecords(uid)
@@ -716,6 +599,7 @@
         }
       });
 
+      console.log("Declaring elements object");
       const elements = {
         openUploadBtn: document.getElementById("openUpload"),
         fileInput: document.getElementById("imageUpload"),
@@ -724,28 +608,33 @@
         prescriptionBtn: document.getElementById("prescriptionBtn"),
         labRecordBtn: document.getElementById("labRecordBtn"),
         toggleLanguageBtn: document.getElementById("toggle-language"),
-        chatInputArea: document.querySelector(".chat-input-area"),
-        micBtn: document.createElement("button") // Add microphone button dynamically
+        chatInputArea: document.getElementById("chat-input-area")
       };
+      console.log("Elements declared:", elements);
 
-      elements.micBtn.innerHTML = '<i class="fas fa-microphone"></i>';
-      elements.micBtn.classList.add("mic-btn");
-      elements.chatInputArea.appendChild(elements.micBtn);
-
+      // Check for missing DOM elements
       if (Object.values(elements).some(el => !el)) {
-        console.error("Missing required DOM elements:", elements);
-        return;
+        console.error("Missing required DOM elements:", {
+          openUploadBtn: !!elements.openUploadBtn,
+          fileInput: !!elements.fileInput,
+          sendBtn: !!elements.sendBtn,
+          languageInput: !!elements.languageInput,
+          prescriptionBtn: !!elements.prescriptionBtn,
+          labRecordBtn: !!elements.labRecordBtn,
+          toggleLanguageBtn: !!elements.toggleLanguageBtn,
+          chatInputArea: !!elements.chatInputArea
+        });
+        throw new Error("Missing required DOM elements");
       }
 
       let selectedFile = null;
       let selectedCategory = "prescriptions";
       let preferredLanguage = localStorage.getItem('preferredLanguage') || 'kannada';
       let displayMode = localStorage.getItem('displayMode') || 'regional';
-      let isRecording = false;
-      let mediaRecorder = null;
-      let conversationStarted = false;
 
-      elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
+      if (elements.toggleLanguageBtn) {
+        elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
+      }
 
       function toggleSummaries() {
         const cards = document.querySelectorAll('.report-card');
@@ -753,69 +642,43 @@
           const regionalSummary = card.querySelector('.regional-summary');
           const englishPatientSummary = card.querySelector('.english-patient-summary');
           
-          if (displayMode === 'regional') {
-            regionalSummary.style.display = 'block';
-            englishPatientSummary.style.display = 'none';
-          } else {
-            regionalSummary.style.display = 'none';
-            englishPatientSummary.style.display = 'block';
+          if (regionalSummary && englishPatientSummary) {
+            if (displayMode === 'regional') {
+              regionalSummary.style.display = 'block';
+              englishPatientSummary.style.display = 'none';
+            } else {
+              regionalSummary.style.display = 'none';
+              englishPatientSummary.style.display = 'block';
+            }
           }
         });
       }
 
       toggleSummaries();
 
-      elements.toggleLanguageBtn.addEventListener('click', async () => {
-        displayMode = displayMode === 'regional' ? 'english' : 'regional';
-        localStorage.setItem('displayMode', displayMode);
-        elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
-        toggleSummaries();
-      });
-
-      document.querySelectorAll('.menu-item').forEach(item => {
-        item.addEventListener('click', async () => {
-          document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
-          item.classList.add('active');
-
-          const section = item.getAttribute('data-section');
-          document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-
-          const targetSection = document.getElementById(section);
-          if (targetSection) {
-            targetSection.classList.add('active');
-          }
-
-          if (section === 'prescriptions' || section === 'lab-records') {
-            elements.chatInputArea.style.display = 'none';
-            elements.prescriptionBtn.classList.remove('active');
-            elements.labRecordBtn.classList.remove('active');
-            conversationStarted = false; // Reset conversation when switching sections
-          } else {
-            elements.chatInputArea.style.display = 'flex';
-            elements.prescriptionBtn.classList.remove('active');
-            elements.labRecordBtn.classList.remove('active');
-            if (!conversationStarted) {
-              // Start the conversation when the "Home" section is active
-              try {
-                const responseData = await startConversation(uid);
-                if (responseData.conversationComplete) {
-                  conversationStarted = false;
-                  await loadInitialScreening(uid); // Refresh screening data
-                } else {
-                  conversationStarted = true;
-                }
-              } catch (error) {
-                alert("Failed to start conversation: " + error.message);
-                conversationStarted = false;
-              }
-            }
-          }
+      if (elements.toggleLanguageBtn) {
+        elements.toggleLanguageBtn.addEventListener('click', async () => {
+          displayMode = displayMode === 'regional' ? 'english' : 'regional';
+          localStorage.setItem('displayMode', displayMode);
+          elements.toggleLanguageBtn.textContent = displayMode === 'regional' ? 'Switch to English' : 'Switch to Regional Language';
+          toggleSummaries();
         });
-      });
+      }
 
-      elements.openUploadBtn.addEventListener("click", () => elements.fileInput.click());
+      // Show chat-input-area only in home section (default)
+      if (elements.chatInputArea) {
+        console.log("Setting initial chat-input-area visibility to visible");
+        elements.chatInputArea.classList.remove('hidden');
+      }
+
+      // Attach event listeners for buttons
+      elements.openUploadBtn.addEventListener("click", () => {
+        console.log("Open upload button clicked");
+        elements.fileInput.click();
+      });
 
       elements.fileInput.addEventListener("change", (e) => {
+        console.log("File input changed");
         selectedFile = e.target.files[0];
         if (selectedFile && !selectedFile.type.startsWith("image/")) {
           alert("Only image files are allowed.");
@@ -834,77 +697,99 @@
       });
 
       elements.prescriptionBtn.addEventListener("click", () => {
+        console.log("Prescription button clicked");
         selectedCategory = "prescriptions";
         elements.prescriptionBtn.classList.add("active");
         elements.labRecordBtn.classList.remove("active");
       });
 
       elements.labRecordBtn.addEventListener("click", () => {
+        console.log("Lab record button clicked");
         selectedCategory = "lab_records";
         elements.labRecordBtn.classList.add("active");
         elements.prescriptionBtn.classList.remove("active");
       });
 
       elements.sendBtn.addEventListener("click", async () => {
+        console.log("Send button clicked");
         const languageText = elements.languageInput.value.trim();
-        if (!selectedFile) return alert("Please select an image first.");
-        if (!languageText) return alert("Please specify a language");
+        if (!selectedFile) {
+          alert("Please select an image first.");
+          return;
+        }
+        if (!languageText) {
+          alert("Please specify a language.");
+          return;
+        }
 
         try {
           const imagePath = await uploadImage(uid, selectedFile, selectedCategory);
           await sendDataToBackend(uid, languageText, imagePath, selectedCategory);
+          alert("Upload successful!");
           elements.languageInput.value = "";
           elements.fileInput.value = "";
           selectedFile = null;
-        } catch (error) {
-          alert("Error processing upload: " + error.message);
-        }
-      });
-
-      elements.micBtn.addEventListener("click", async () => {
-        if (!conversationStarted) {
-          alert("Please navigate to the Home section to start the conversation.");
-          return;
-        }
-
-        if (isRecording) {
-          mediaRecorder.stop();
-          elements.micBtn.classList.remove("recording");
-          isRecording = false;
-          console.log("Recording stopped");
-        } else {
-          try {
-            mediaRecorder = await startRecording();
-            elements.micBtn.classList.add("recording");
-            isRecording = true;
-            console.log("Recording started");
-
-            mediaRecorder.onstop = async () => {
-              const audioBlob = await new Promise(resolve => mediaRecorder.onstop = () => resolve(new Blob(mediaRecorder.chunks, { type: 'audio/webm' })));
-              try {
-                const responseData = await startConversation(uid, audioBlob);
-                if (responseData.conversationComplete) {
-                  conversationStarted = false;
-                  await loadInitialScreening(uid); // Refresh screening data
-                }
-              } catch (error) {
-                alert("Failed to process voice input: " + error.message);
-              }
-            };
-          } catch (error) {
-            alert("Failed to start recording: " + error.message);
+          elements.prescriptionBtn.classList.remove("active");
+          elements.labRecordBtn.classList.remove("active");
+          // Reload relevant section
+          if (selectedCategory === "prescriptions") {
+            await loadPrescriptions(uid);
+          } else if (selectedCategory === "lab_records") {
+            await loadLabRecords(uid);
           }
+        } catch (error) {
+          console.error("Error processing upload:", error);
+          alert("Error processing upload: " + error.message);
         }
       });
 
       elements.languageInput.addEventListener("keypress", (e) => {
         if (e.key === "Enter") {
+          console.log("Enter key pressed in language input");
           e.preventDefault();
           elements.sendBtn.click();
         }
       });
+
+      document.querySelectorAll('.menu-item').forEach(item => {
+        item.addEventListener('click', async () => {
+          console.log("Menu item clicked:", item.getAttribute('data-section'));
+          document.querySelectorAll('.menu-item').forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+
+          const section = item.getAttribute('data-section');
+          document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+
+          const targetSection = document.getElementById(section);
+          if (targetSection) {
+            targetSection.classList.add('active');
+          }
+
+          // Toggle chat-input-area visibility based on section
+          if (elements && elements.chatInputArea) {
+            if (section === 'home') {
+              console.log("Showing chat-input-area for home section");
+              elements.chatInputArea.classList.remove('hidden');
+            } else {
+              console.log("Hiding chat-input-area for section:", section);
+              elements.chatInputArea.classList.add('hidden');
+            }
+          } else {
+            console.error("Elements or chatInputArea not defined when toggling visibility");
+          }
+
+          if (section === 'prescriptions') {
+            await loadPrescriptions(uid);
+          } else if (section === 'lab-records') {
+            await loadLabRecords(uid);
+          } else if (section === 'home') {
+            await loadInitialScreening(uid);
+          }
+        });
+      });
     } catch (error) {
       console.error("Dashboard initialization error:", error);
+      alert("Error initializing dashboard: " + error.message);
       window.location.href = "/login";
     }
   }
