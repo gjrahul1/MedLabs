@@ -120,8 +120,6 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
 
 # LLM Setup
-
-# LLM Setup
 conversation_llm = ChatOpenAI(
     model="gpt-4o-mini",
     openai_api_key=openai_api_key,
@@ -232,6 +230,84 @@ DOCTORS = [
     {"consultant_id": "DR0019", "full_name": "Dr. Supriya Sen", "specialty": "neurology", "availability": True},
     {"consultant_id": "DR0020", "full_name": "Dr. Anand Kulkarni", "specialty": "orthopedics", "availability": True}
 ]
+
+# Missing Functions Added Here
+def generate_consultant_id():
+    counter_ref = db.collection('counters').document('consultant_id')
+    @firestore.transactional
+    def transactional_generate(transaction):
+        snapshot = counter_ref.get(transaction=transaction)
+        next_id = snapshot.get('next_id') if snapshot.exists else 1
+        transaction.set(counter_ref, {'next_id': next_id + 1})
+        return next_id
+    transaction = db.transaction()
+    return f'DR{transactional_generate(transaction):04d}'
+
+def validate_doctor_mapping(symptoms, assigned_specialty):
+    try:
+        # Prepare input for the doctor mapping validation chain
+        validation_input = {
+            "symptoms": ", ".join(symptoms),
+            "assigned_specialty": assigned_specialty
+        }
+        # Run the chain synchronously
+        validation_response = doctor_mapping_validation_chain.invoke(validation_input)
+        raw_response = validation_response.content
+        cleaned_response = raw_response.strip().lstrip("```json").rstrip("```")
+        validation_data = json.loads(cleaned_response)
+        return validation_data
+    except Exception as e:
+        logger.error(f"Error validating doctor mapping: {str(e)}")
+        return {
+            "is_correct": True,
+            "correct_specialty": assigned_specialty,
+            "reasoning": "Validation failed, defaulting to assigned specialty."
+        }
+
+def fetch_available_doctors(specialty):
+    try:
+        specialty = specialty.lower()
+        doctors_list = [
+            {"consultant_id": doc["consultant_id"], "full_name": doc["full_name"], "specialty": doc["specialty"]}
+            for doc in DOCTORS if doc["specialty"] == specialty and doc["availability"]
+        ]
+        if not doctors_list:
+            logger.warning(f"No doctors found for specialty: {specialty}")
+        return doctors_list
+    except Exception as e:
+        logger.error(f"Error fetching doctors: {str(e)}")
+        return []
+
+def assign_doctor(medical_data):
+    symptoms = medical_data.get('symptoms', [])
+    severity = medical_data.get('severity', [''])
+    duration = medical_data.get('duration', [''])
+    additional_symptoms = symptoms[1:] if len(symptoms) > 1 else []
+
+    if not symptoms:
+        return [], "general medicine"
+
+    # Determine initial specialty
+    specialty = determine_specialty(symptoms, severity, duration, additional_symptoms)
+    
+    # Validate the specialty
+    validation_result = validate_doctor_mapping(symptoms, specialty)
+    
+    # Update specialty if validation indicates it's incorrect
+    if not validation_result.get("is_correct", True):
+        specialty = validation_result.get("correct_specialty", specialty)
+        logger.info(f"Specialty updated to {specialty} based on validation for symptoms: {', '.join(symptoms)}")
+    
+    # Fetch available doctors for the specialty
+    doctors_list = fetch_available_doctors(specialty)
+    
+    # Fallback to general medicine if no doctors are available
+    if not doctors_list:
+        specialty = "general medicine"
+        doctors_list = fetch_available_doctors(specialty)
+        logger.info(f"No doctors available for initial specialty; defaulted to {specialty}")
+
+    return doctors_list, specialty
 
 def token_required(f):
     @wraps(f)
@@ -440,7 +516,6 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                     'is_repeat': False,
                     'reward': -1
                 })
-                return {"success": True, "response": response_text, "medical_data": medical_data, "audio_url": audio_url}, 200
             medical_data["symptoms"] = extracted_symptoms
             medical_data["severity"] = [''] * len(extracted_symptoms)
             medical_data["duration"] = [''] * len(extracted_symptoms)

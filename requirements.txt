@@ -20,3 +20,4 @@ langchain-openai
 func_timeout
 openai-whisper
 hypercron
+pydub
