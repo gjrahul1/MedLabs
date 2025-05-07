@@ -11,14 +11,23 @@ from functools import wraps
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials, auth, firestore, storage
-from gemini_processor import process_text_with_gemini
-from google.cloud import storage as gcs
-from google.api_core import retry, exceptions
-from google.auth import load_credentials_from_file
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Load Firebase credentials
+cred_path = './Cred/Firebase/Med App/med-labs-42f13-firebase-adminsdk-fbsvc-43b78dfef7.json'
+
+# Initialize Firebase before any imports that use Firestore
+if not firebase_admin._apps:
+    cred = credentials.Certificate(cred_path)
+    firebase_admin.initialize_app(cred, {
+        'storageBucket': 'med-labs-new-bucket-2025'
+    })
+    logger.info("✅ Firebase initialized successfully with bucket: med-labs-new-bucket-2025. SDK Version: %s", firebase_admin.__version__)
+
+db = firestore.client()
 
 # Load environment variables
 load_dotenv(dotenv_path=os.path.join(os.getcwd(), '.env'))
@@ -44,27 +53,17 @@ except Exception as e:
 
 client = OpenAI(api_key=openai_api_key)
 
-# Load Firebase credentials
-cred_path = './Cred/Firebase/Med App/med-labs-42f13-firebase-adminsdk-fbsvc-43b78dfef7.json'
-
-# Initialize Firebase with the old project (for Firestore, Authentication, etc.)
-if not firebase_admin._apps:
-    cred = credentials.Certificate(cred_path)
-    firebase_admin.initialize_app(cred, {
-        'storageBucket': 'med-labs-new-bucket-2025'  # Point to the new bucket, but project remains med-labs-42f13
-    })
-    logger.info("✅ Firebase initialized successfully with bucket: med-labs-new-bucket-2025. SDK Version: %s", firebase_admin.__version__)
-
-db = firestore.client()
-
 # Load the same service account credentials for GCS using google-auth
+from google.auth import load_credentials_from_file
 gcs_credentials, _ = load_credentials_from_file(cred_path)
 
 # Initialize GCS client with the new project, using the loaded credentials
+from google.cloud import storage as gcs
 gcs_client = gcs.Client(project='med-labs-new-2025', credentials=gcs_credentials)
 bucket = gcs_client.bucket('med-labs-new-bucket-2025')
 
 # Define a retry predicate for 400 errors
+from google.api_core import retry, exceptions
 def if_bad_request(exception):
     return isinstance(exception, exceptions.BadRequest)
 
@@ -81,11 +80,10 @@ bucket_name = 'med-labs-new-bucket-2025'
 try:
     bucket_obj = validate_bucket(bucket_name)
     logger.info(f"Bucket '{bucket_name}' exists and is accessible. Project ID: {gcs_client.project}")
-    bucket = gcs_client.bucket(bucket_name)  # Reassign bucket after successful validation
+    bucket = gcs_client.bucket(bucket_name)
 except Exception as e:
     logger.warning(f"Failed to access bucket '{bucket_name}': {str(e)}. Proceeding without bucket validation. GCS operations may fail.")
-    # Fallback bucket name (corrected to the actual bucket name)
-    fallback_bucket_name = 'med-labs-42f13'  # Updated to the correct bucket name
+    fallback_bucket_name = 'med-labs-42f13'
     logger.info(f"Attempting to use fallback bucket '{fallback_bucket_name}'...")
     try:
         bucket_obj = validate_bucket(fallback_bucket_name)
@@ -93,7 +91,7 @@ except Exception as e:
         logger.info(f"Fallback bucket '{fallback_bucket_name}' exists and is accessible. Project ID: {gcs_client.project}")
     except Exception as e2:
         logger.error(f"Bucket validation failed for both '{bucket_name}' and '{fallback_bucket_name}': {str(e2)}. Please ensure the bucket exists, the project has billing enabled, the Storage API is enabled, and the service account has the necessary permissions.")
-        raise  # Raise the error to catch any issues
+        raise
 
 # Now import modules that depend on Firebase
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, send_from_directory
@@ -102,7 +100,6 @@ from gemini_processor import process_text_with_gemini, generate_medical_history
 from error_gemini_processor import generate_error_poem
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
-from google.cloud import storage
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
@@ -231,83 +228,61 @@ DOCTORS = [
     {"consultant_id": "DR0020", "full_name": "Dr. Anand Kulkarni", "specialty": "orthopedics", "availability": True}
 ]
 
-# Missing Functions Added Here
-def generate_consultant_id():
-    counter_ref = db.collection('counters').document('consultant_id')
-    @firestore.transactional
-    def transactional_generate(transaction):
-        snapshot = counter_ref.get(transaction=transaction)
-        next_id = snapshot.get('next_id') if snapshot.exists else 1
-        transaction.set(counter_ref, {'next_id': next_id + 1})
-        return next_id
-    transaction = db.transaction()
-    return f'DR{transactional_generate(transaction):04d}'
-
-def validate_doctor_mapping(symptoms, assigned_specialty):
-    try:
-        # Prepare input for the doctor mapping validation chain
-        validation_input = {
-            "symptoms": ", ".join(symptoms),
-            "assigned_specialty": assigned_specialty
-        }
-        # Run the chain synchronously
-        validation_response = doctor_mapping_validation_chain.invoke(validation_input)
-        raw_response = validation_response.content
-        cleaned_response = raw_response.strip().lstrip("```json").rstrip("```")
-        validation_data = json.loads(cleaned_response)
-        return validation_data
-    except Exception as e:
-        logger.error(f"Error validating doctor mapping: {str(e)}")
-        return {
-            "is_correct": True,
-            "correct_specialty": assigned_specialty,
-            "reasoning": "Validation failed, defaulting to assigned specialty."
-        }
-
-def fetch_available_doctors(specialty):
-    try:
-        specialty = specialty.lower()
-        doctors_list = [
-            {"consultant_id": doc["consultant_id"], "full_name": doc["full_name"], "specialty": doc["specialty"]}
-            for doc in DOCTORS if doc["specialty"] == specialty and doc["availability"]
-        ]
-        if not doctors_list:
-            logger.warning(f"No doctors found for specialty: {specialty}")
-        return doctors_list
-    except Exception as e:
-        logger.error(f"Error fetching doctors: {str(e)}")
-        return []
-
 def assign_doctor(medical_data):
-    symptoms = medical_data.get('symptoms', [])
-    severity = medical_data.get('severity', [''])
-    duration = medical_data.get('duration', [''])
-    additional_symptoms = symptoms[1:] if len(symptoms) > 1 else []
+    """
+    Assign a doctor based on medical data symptoms.
+    Returns a tuple: (list of matching doctors, assigned specialty).
+    """
+    try:
+        symptoms = medical_data.get('symptoms', [])
+        if not symptoms:
+            logger.warning("No symptoms provided for doctor assignment")
+            return [], "general medicine"
 
-    if not symptoms:
+        normalized_symptoms = [normalize_symptom(symptom) for symptom in symptoms]
+        specialty = determine_specialty(normalized_symptoms)
+        if not specialty:
+            specialty = "general medicine"
+
+        matching_doctors = [
+            doctor for doctor in DOCTORS
+            if doctor['specialty'].lower() == specialty.lower() and doctor['availability']
+        ]
+
+        if not matching_doctors:
+            logger.warning(f"No available doctors found for specialty: {specialty}")
+            return [], specialty
+
+        logger.info(f"Assigned specialty: {specialty}, Found {len(matching_doctors)} doctors")
+        return matching_doctors, specialty
+    except Exception as e:
+        logger.error(f"Error in assign_doctor: {str(e)}")
         return [], "general medicine"
+    
+def update_conversation_state(session, medical_data, current_state, next_state, asked_questions, current_query, conversation_id):
+    """
+    Update the conversation state in the session.
+    """
+    session['medical_data'] = medical_data
+    session['current_state'] = next_state
+    session['asked_questions'] = asked_questions
+    session['current_query'] = current_query
+    session['conversation_id'] = conversation_id
+    logger.debug(f"Updated session state: current_state={next_state}, medical_data={medical_data}")
 
-    # Determine initial specialty
-    specialty = determine_specialty(symptoms, severity, duration, additional_symptoms)
-    
-    # Validate the specialty
-    validation_result = validate_doctor_mapping(symptoms, specialty)
-    
-    # Update specialty if validation indicates it's incorrect
-    if not validation_result.get("is_correct", True):
-        specialty = validation_result.get("correct_specialty", specialty)
-        logger.info(f"Specialty updated to {specialty} based on validation for symptoms: {', '.join(symptoms)}")
-    
-    # Fetch available doctors for the specialty
-    doctors_list = fetch_available_doctors(specialty)
-    
-    # Fallback to general medicine if no doctors are available
-    if not doctors_list:
-        specialty = "general medicine"
-        doctors_list = fetch_available_doctors(specialty)
-        logger.info(f"No doctors available for initial specialty; defaulted to {specialty}")
-
-    return doctors_list, specialty
+def generate_consultant_id():
+    """
+    Generate a unique consultant ID using a hash of timestamp and random string.
+    """
+    try:
+        timestamp = str(firestore.SERVER_TIMESTAMP)
+        random_str = secrets.token_hex(8)
+        consultant_id = hashlib.sha256((timestamp + random_str).encode()).hexdigest()[:16]
+        logger.debug(f"Generated consultant ID: {consultant_id}")
+        return consultant_id
+    except Exception as e:
+        logger.error(f"Error generating consultant ID: {str(e)}")
+        return secrets.token_hex(8)[:16]
 
 def token_required(f):
     @wraps(f)
@@ -392,55 +367,140 @@ def transcribe_audio(audio_path, language="en", retries=3):
             else:
                 return f"Transcription failed: {str(e)}"
     return "Transcription failed after multiple attempts"
-    
-def process_conversation(audio_path=None, transcript=None, history="", session_id=None):
+
+def synthesize_audio(text, language="en", session_id=None):
+    try:
+        logger.debug(f"Synthesizing audio: {text[:50]}... (language: {language})")
+        if not text or not text.strip():
+            logger.warning("TTS input is empty")
+            return None
+
+        # Generate cache key
+        cache_key = hashlib.md5((text + language).encode()).hexdigest()
+        doc_ref = db.collection('tts_cache').document(cache_key)
+        
+        # Check Firestore cache (synchronous)
+        logger.debug("Checking Firestore cache for cache_key: %s", cache_key)
+        doc = doc_ref.get()
+        if doc.exists:
+            cached = doc.to_dict()
+            gcs_url = cached.get('gcs_url')
+            logger.info(f"Retrieved cached TTS for: {text[:50]}")
+            return gcs_url
+
+        # Generate TTS
+        logger.debug("Generating TTS audio")
+        tts = gTTS(text=text, lang=language, slow=False)
+        temp_file = os.path.join(tempfile.gettempdir(), f"temp_tts_{cache_key}.mp3")
+        tts.save(temp_file)
+        audio_size = os.path.getsize(temp_file)
+        if audio_size < 1024:
+            logger.error(f"Generated audio {temp_file} too small: {audio_size} bytes")
+            os.remove(temp_file)
+            raise ValueError(f"Generated audio file is too small: {audio_size} bytes")
+
+        # Upload to GCS (bucket is publicly readable via IAM)
+        logger.debug("Uploading audio to GCS")
+        gcs_path = f"tts/{cache_key}.mp3"
+        blob = bucket.blob(gcs_path)
+        blob.upload_from_filename(temp_file)
+        logger.debug("Audio uploaded to GCS at path: %s", gcs_path)
+        
+        # Construct public URL manually without accessing metadata
+        gcs_url = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
+        logger.debug(f"Constructed public URL: {gcs_url}")
+        
+        os.remove(temp_file)
+
+        # Cache metadata in Firestore (synchronous)
+        logger.debug("Caching URL in Firestore")
+        doc_ref.set({
+            'text': text,
+            'language': language,
+            'gcs_url': gcs_url,
+            'timestamp': firestore.SERVER_TIMESTAMP
+        })
+        logger.info(f"Uploaded TTS to GCS and cached in Firestore: {gcs_url}")
+        return gcs_url
+    except Exception as e:
+        logger.error(f"Audio synthesis error: {str(e)}")
+        if 'temp_file' in locals() and os.path.exists(temp_file):
+            os.remove(temp_file)
+        return None
+
+def reset_conversation_state(session, clear_firestore=False, uid=None):
+    """
+    Reset all conversation-related session data to start a new conversation.
+    Optionally clear Firestore data to prevent stale symptoms.
+    """
+    # Clear all possible session keys except user authentication data
+    keys_to_remove = [key for key in session.keys() if key not in ('user_info', 'idToken')]
+    for key in keys_to_remove:
+        session.pop(key, None)
+    # Reinitialize with default values
+    session['medical_data'] = {"symptoms": [], "severity": [], "duration": [], "triggers": []}
+    session['current_state'] = "INITIAL"
+    session['asked_questions'] = {}
+    session['current_query'] = {"symptom": None, "field": None, "interpreted_severity": None, "raw_severity": None}
+    session['conversation_id'] = secrets.token_hex(16)
+    session['conversation_history'] = ""
+    session['last_session_id'] = None
+    logger.debug("Fully reset conversation state in session: %s", session)
+
+    # Optionally clear Firestore initial_screenings document
+    if clear_firestore and uid:
+        try:
+            doc_id = f'initial_screening_{uid}'
+            doc_ref = db.collection('initial_screenings').document(doc_id)
+            doc_ref.set({
+                'uid': uid,
+                'patient_name': session.get('user_info', {}).get('full_name', uid),
+                'symptoms': '',
+                'severity': '',
+                'duration': '',
+                'triggers': '',
+                'consultant_id': None,
+                'timestamp': firestore.SERVER_TIMESTAMP
+            }, merge=True)
+            logger.debug("Cleared Firestore initial_screenings for user: %s", uid)
+        except Exception as e:
+            logger.error(f"Failed to clear Firestore initial_screenings for user {uid}: {str(e)}")
+
+def process_conversation(audio_path=None, transcript=None, history="", session_id=None, current_state="INITIAL"):
     try:
         language = "en"
-        medical_data = session.get('medical_data', {"symptoms": [], "severity": [], "duration": [], "triggers": []})
-        if not medical_data.get("symptoms"):
-            medical_data = {"symptoms": [], "severity": [], "duration": [], "triggers": []}
+        # Reset session data for initial request to avoid stale symptoms
+        if transcript is None or (transcript == "" and current_state == "INITIAL"):
+            reset_conversation_state(session, clear_firestore=True, uid=request.user.get('uid'))
+            logger.debug("After reset in process_conversation, session state: %s", session)
 
-        current_state = session.get('current_state', "INITIAL")
+        # Ensure medical_data is fresh for INITIAL state
+        medical_data = session.get('medical_data', {"symptoms": [], "severity": [], "duration": [], "triggers": []})
+        if current_state == "INITIAL" and (transcript is None or transcript == ""):
+            medical_data = {"symptoms": [], "severity": [], "duration": [], "triggers": []}
+            session['medical_data'] = medical_data
+            logger.debug("Forced fresh medical_data for INITIAL state: %s", medical_data)
+        elif not medical_data.get("symptoms"):
+            medical_data = {"symptoms": [], "severity": [], "duration": [], "triggers": []}
+            session['medical_data'] = medical_data
+        else:
+            logger.debug("medical_data after session retrieval: %s", medical_data)
+
         asked_questions = session.get('asked_questions', {})
         if not asked_questions:
             asked_questions = {symptom: {"severity": False, "duration": False, "triggers": False} 
                                for symptom in medical_data.get("symptoms", [])}
-        session['asked_questions'] = asked_questions
 
         current_query = session.get('current_query', {"symptom": None, "field": None, "interpreted_severity": None, "raw_severity": None})
-
         conversation_id = session.get('conversation_id', secrets.token_hex(16))
-        session['conversation_id'] = conversation_id
 
-        if session_id:
-            convo_query = db.collection('conversations').where('session_id', '==', session_id).where('state', '==', 'INITIAL').limit(1).get()
-            if convo_query:
-                logger.info(f"Conversation already initiated for session_id: {session_id}")
-                intro = "What symptoms are you experiencing?"
-                if not audio_path and not transcript:
-                    audio_url = synthesize_audio(intro, language, session_id)
-                    return {"success": True, "response": intro, "medical_data": medical_data, "audio_url": audio_url, "already_initiated": True}, 200
+        logger.debug(f"Processing conversation: state={current_state}, transcript={transcript}, session_id={session_id}, medical_data={medical_data}")
 
-        if audio_path:
-            uid = request.user.get('uid')
-            gcs_path = f"voice_inputs/{uid}/{session_id}.webm"
-            blob = bucket.blob(gcs_path)
-            blob.upload_from_filename(audio_path)
-            gcs_uri = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
-            logger.info(f"Uploaded audio to GCS: {gcs_uri}")
-
-            transcription = transcribe_audio(audio_path, language)
-            if "failed" in transcription.lower() or "too small" in transcription.lower():
-                logger.error(f"Transcription failed: {transcription}")
-                return {"success": False, "response": "Audio issue detected. Please try again.", "medical_data": medical_data, "audio_url": None}, 400
-            normalized_transcription = normalize_symptom(transcription)
-        elif transcript:
-            transcription = transcript
-            normalized_transcription = normalize_symptom(transcript)
-        else:
+        # Handle initial conversation start
+        if transcript is None or (transcript == "" and current_state == "INITIAL"):
             intro = "What symptoms are you experiencing?"
             audio_url = synthesize_audio(intro, language, session_id)
-            session['current_state'] = "INITIAL"
+            update_conversation_state(session, medical_data, current_state, "INITIAL", asked_questions, current_query, conversation_id)
             db.collection('conversations').add({
                 'conversation_id': conversation_id,
                 'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
@@ -457,6 +517,25 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
             })
             return {"success": True, "response": intro, "medical_data": medical_data, "audio_url": audio_url}, 200
 
+        # Handle transcript processing
+        transcription = transcript
+        normalized_transcription = normalize_symptom(transcript) if transcript else ""
+
+        if audio_path:
+            uid = request.user.get('uid')
+            gcs_path = f"voice_inputs/{uid}/{session_id}.webm"
+            blob = bucket.blob(gcs_path)
+            blob.upload_from_filename(audio_path)
+            gcs_uri = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
+            logger.info(f"Uploaded audio to GCS: {gcs_uri}")
+
+            transcription = transcribe_audio(audio_path, language)
+            if "failed" in transcription.lower() or "too small" in transcription.lower():
+                logger.error(f"Transcription failed: {transcription}")
+                return {"success": False, "response": "Audio issue detected. Please try again.", "medical_data": medical_data, "audio_url": None}, 400
+            normalized_transcription = normalize_symptom(transcription)
+
+        # Extract symptoms
         symptom_extraction_input = {
             "input": transcription,
             "history": history,
@@ -482,6 +561,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
 
         if needs_clarification:
             audio_url = synthesize_audio(clarification_message, language, session_id)
+            update_conversation_state(session, medical_data, current_state, current_state, asked_questions, current_query, conversation_id)
             db.collection('conversations').add({
                 'conversation_id': conversation_id,
                 'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
@@ -498,191 +578,115 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
             })
             return {"success": True, "response": clarification_message, "medical_data": medical_data, "audio_url": audio_url}, 200
 
+        # State machine transitions
+        response_text = ""
+        next_state = current_state
+        is_repeat = False
+        updated_symptoms = extracted_symptoms
+
         if current_state == "INITIAL":
             if not extracted_symptoms:
                 response_text = "I couldn't identify any symptoms. Could you please tell me more?"
-                audio_url = synthesize_audio(response_text, language, session_id)
-                db.collection('conversations').add({
-                    'conversation_id': conversation_id,
-                    'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
-                    'session_id': session_id,
-                    'transcription': transcription,
-                    'normalized_transcription': normalized_transcription,
-                    'state': current_state,
-                    'response': response_text,
-                    'symptoms': [],
-                    'next_state': current_state,
-                    'timestamp': firestore.SERVER_TIMESTAMP,
-                    'is_repeat': False,
-                    'reward': -1
-                })
-            medical_data["symptoms"] = extracted_symptoms
-            medical_data["severity"] = [''] * len(extracted_symptoms)
-            medical_data["duration"] = [''] * len(extracted_symptoms)
-            medical_data["triggers"] = ['unknown'] * len(extracted_symptoms)
-            session['medical_data'] = medical_data
+                next_state = "INITIAL"
+                reward = -1
+            else:
+                medical_data["symptoms"] = extracted_symptoms
+                medical_data["severity"] = [''] * len(extracted_symptoms)
+                medical_data["duration"] = [''] * len(extracted_symptoms)
+                medical_data["triggers"] = ['unknown'] * len(extracted_symptoms)
+                session['medical_data'] = medical_data
+                response_text = f"How severe is your {', '.join(extracted_symptoms)}? Is it mild, moderate, or severe?"
+                next_state = "SEVERITY"
+                reward = 1
 
-        input_vars = {"input": transcription, "history": history, "medical_data": json.dumps(medical_data), "current_state": current_state}
-        try:
-            conversation_response = conversation_chain.invoke(input_vars)
-        except FunctionTimedOut:
-            return {"success": False, "response": "Processing timed out.", "medical_data": medical_data, "audio_url": None}, 500
-        raw_conversation_response = conversation_response.content
-        cleaned_conversation_response = raw_conversation_response.strip().lstrip("```json").rstrip("```")
+        elif current_state == "SEVERITY":
+            transcription_lower = transcription.lower()
+            severity = "moderate"  # Default severity
+            if "mild" in transcription_lower:
+                severity = "mild"
+            elif "moderate" in transcription_lower:
+                severity = "moderate"
+            elif "severe" in transcription_lower:
+                severity = "severe"
+            else:
+                num_match = re.search(r'\b([1-9]|10)\b', transcription_lower)
+                if num_match:
+                    num = int(num_match.group(1))
+                    severity = "mild" if num <= 3 else "moderate" if num <= 6 else "severe"
+                    current_query["raw_severity"] = num_match.group(1)
+                    current_query["interpreted_severity"] = severity
+                    response_text = f"You said your {', '.join(medical_data['symptoms'])} severity is {severity}. Is that correct?"
+                    next_state = "CONFIRM_SEVERITY"
+                else:
+                    response_text = "Please specify the severity: mild, moderate, or severe."
+                    next_state = "SEVERITY"
+                    is_repeat = True
+                    reward = -1
+            if not is_repeat:
+                medical_data["severity"] = [severity] * len(medical_data["symptoms"])
+                response_text = f"How long have you been experiencing {', '.join(medical_data['symptoms'])}?"
+                next_state = "DURATION"
+                reward = 1
+            for symptom in medical_data["symptoms"]:
+                if symptom not in asked_questions:
+                    asked_questions[symptom] = {"severity": False, "duration": False, "triggers": False}
+                asked_questions[symptom]["severity"] = True
 
-        try:
-            json_response = json_chain.invoke({"conversation_output": cleaned_conversation_response})
-        except FunctionTimedOut:
-            return {"success": False, "response": "JSON processing timed out.", "medical_data": medical_data, "audio_url": None}, 500
-        raw_json_response = json_response.content
-        cleaned_json_response = raw_json_response.strip().lstrip("```json").rstrip("```")
-        data = json.loads(cleaned_json_response)
-
-        response_text = data["response"]
-        raw_medical_data = data["medical_data"]
-        next_state = data["next_state"]
-        assign_doctor_flag = data["assign_doctor"]
-
-        if not isinstance(raw_medical_data, dict):
-            raw_medical_data = json.loads(raw_medical_data) if isinstance(raw_medical_data, str) else {"symptoms": [], "severity": [], "duration": [], "triggers": []}
-
-        updated_symptoms = raw_medical_data.get("symptoms", [])
-        updated_severities = raw_medical_data.get("severity", [])
-        updated_durations = raw_medical_data.get("duration", [])
-        updated_triggers = raw_medical_data.get("triggers", [])
-
-        num_symptoms = len(updated_symptoms)
-        updated_severities.extend([''] * (num_symptoms - len(updated_severities)))
-        updated_durations.extend([''] * (num_symptoms - len(updated_durations)))
-        updated_triggers.extend(['unknown'] * (num_symptoms - len(updated_triggers)))
-
-        # Handle SEVERITY state
-        if current_state == "SEVERITY":
-            for idx in range(len(updated_symptoms)):
-                if not updated_severities[idx]:
-                    transcription_lower = transcription.lower()
-                    if "mild" in transcription_lower:
-                        updated_severities[idx] = "mild"
-                    elif "moderate" in transcription_lower:
-                        updated_severities[idx] = "moderate"
-                    elif "severe" in transcription_lower:
-                        updated_severities[idx] = "severe"
-                    else:
-                        num_match = re.search(r'\b([1-9]|10)\b', transcription_lower)
-                        if num_match:
-                            num = int(num_match.group(1))
-                            updated_severities[idx] = "mild" if num <= 3 else "moderate" if num <= 6 else "severe"
-                            current_query["raw_severity"] = num_match.group(1)
-                            current_query["interpreted_severity"] = updated_severities[idx]
-                        else:
-                            updated_severities[idx] = "moderate"
-                    logger.debug(f"Extracted severity '{updated_severities[idx]}' for symptom {updated_symptoms[idx]}")
-
-        # Handle DURATION state
-        if current_state == "DURATION":
-            for idx in range(len(updated_symptoms)):
-                if not updated_durations[idx]:
-                    transcription_lower = transcription.lower()
-                    duration_match = re.search(r'(\d+\s*(to\s*\d+\s*)?(month|week|day))', transcription_lower)
-                    updated_durations[idx] = duration_match.group(0) if duration_match else "unknown"
-                    logger.debug(f"Extracted duration '{updated_durations[idx]}' for symptom {updated_symptoms[idx]}")
-
-        # Handle TRIGGERS state
-        if current_state == "TRIGGERS":
-            for idx in range(len(updated_symptoms)):
-                if not updated_triggers[idx]:
-                    transcription_lower = transcription.lower()
-                    updated_triggers[idx] = "unknown" if any(phrase in transcription_lower for phrase in ["i'm not sure", "it's unknown", "i don't know"]) else transcription_lower
-                    logger.debug(f"Extracted triggers '{updated_triggers[idx]}' for symptom {updated_symptoms[idx]}")
-
-        # Handle CONFIRM_SEVERITY state
-        if current_state == "CONFIRM_SEVERITY":
+        elif current_state == "CONFIRM_SEVERITY":
             transcription_lower = transcription.lower()
             symptom = current_query.get("symptom")
             interpreted_severity = current_query.get("interpreted_severity")
             if any(x in transcription_lower for x in ["yes", "correct", "right", "okay"]):
                 for idx, s in enumerate(medical_data["symptoms"]):
                     if s == symptom:
-                        updated_severities[idx] = interpreted_severity
+                        medical_data["severity"][idx] = interpreted_severity
                         break
-                response_text = f"How long have you been experiencing {symptom}?"
-                session['current_query'] = {"symptom": symptom, "field": "duration"}
+                response_text = f"How long have you been experiencing {', '.join(medical_data['symptoms'])}?"
+                current_query = {"symptom": symptom, "field": "duration"}
                 next_state = "DURATION"
                 reward = 1
             elif any(x in transcription_lower for x in ["no", "incorrect", "wrong"]):
-                response_text = f"Please specify the severity of your {symptom}. Is it mild, moderate, or severe?"
-                session['current_query'] = {"symptom": symptom, "field": "severity"}
+                response_text = f"Please specify the severity of your {', '.join(medical_data['symptoms'])}. Is it mild, moderate, or severe?"
+                current_query = {"symptom": symptom, "field": "severity"}
                 next_state = "SEVERITY"
                 reward = -1
             else:
                 response_text = "Could you please confirm if this is correct? Please say 'yes' or 'no'."
-                session['current_query'] = current_query
                 next_state = "CONFIRM_SEVERITY"
                 reward = 0
-            audio_url = synthesize_audio(response_text, language, session_id)
-            medical_data["severity"] = updated_severities
-            session['medical_data'] = medical_data
-            session['current_state'] = next_state
-            db.collection('conversations').add({
-                'conversation_id': conversation_id,
-                'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
-                'session_id': session_id,
-                'transcription': transcription,
-                'normalized_transcription': normalized_transcription,
-                'state': current_state,
-                'response': response_text,
-                'symptoms': updated_symptoms,
-                'next_state': next_state,
-                'timestamp': firestore.SERVER_TIMESTAMP,
-                'is_repeat': False,
-                'reward': reward
-            })
-            return {"success": True, "response": response_text, "medical_data": medical_data, "audio_url": audio_url}, 200
 
-        # Validate INITIAL state
-        if current_state == "INITIAL" and not updated_symptoms:
-            response_text = "I couldn't identify any symptoms. Could you please tell me more?"
-            audio_url = synthesize_audio(response_text, language, session_id)
-            db.collection('conversations').add({
-                'conversation_id': conversation_id,
-                'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
-                'session_id': session_id,
-                'transcription': transcription,
-                'normalized_transcription': normalized_transcription,
-                'state': current_state,
-                'response': response_text,
-                'symptoms': [],
-                'next_state': current_state,
-                'timestamp': firestore.SERVER_TIMESTAMP,
-                'is_repeat': False,
-                'reward': -1
-            })
-            return {"success": True, "response": response_text, "medical_data": medical_data, "audio_url": audio_url}, 200
-
-        # Detect repeated questions
-        is_repeat = False
-        if current_query.get('symptom') and current_query.get('field'):
-            if response_text.startswith(f"How severe is your {current_query['symptom']}?") and asked_questions.get(current_query['symptom'], {}).get('severity'):
-                is_repeat = True
-                reward = -1
-            elif response_text.startswith(f"How long have you been experiencing {current_query['symptom']}?") and asked_questions.get(current_query['symptom'], {}).get('duration'):
-                is_repeat = True
-                reward = -1
-            elif response_text.startswith(f"What triggers your {current_query['symptom']}, if anything?") and asked_questions.get(current_query['symptom'], {}).get('triggers'):
-                is_repeat = True
-                reward = -1
-            elif next_state != current_state and not is_repeat:
-                reward = 1
-
-        # Handle CONFIRM state
-        if current_state == "CONFIRM":
+        elif current_state == "DURATION":
             transcription_lower = transcription.lower()
-            yes_synonyms = symptom_specialty_map.get('yes', {}).get('synonyms', ['yes', 'sure', 'okay', 'please'])
+            duration_match = re.search(r'(\d+\s*(to\s*\d+\s*)?(month|week|day))', transcription_lower)
+            duration = duration_match.group(0) if duration_match else "unknown"
+            medical_data["duration"] = [duration] * len(medical_data["symptoms"])
+            response_text = f"What triggers your {', '.join(medical_data['symptoms'])}, if anything? Say 'unknown' if unsure."
+            next_state = "TRIGGERS"
+            reward = 1
+            for symptom in medical_data["symptoms"]:
+                asked_questions[symptom]["duration"] = True
+
+        elif current_state == "TRIGGERS":
+            transcription_lower = transcription.lower()
+            triggers = "unknown" if any(phrase in transcription_lower for phrase in ["i'm not sure", "it's unknown", "i don't know"]) else transcription_lower
+            medical_data["triggers"] = [triggers] * len(medical_data["symptoms"])
+            response_text = "May I recommend a doctor for you?"
+            next_state = "CONFIRM"
+            reward = 1
+            for symptom in medical_data["symptoms"]:
+                asked_questions[symptom]["triggers"] = True
+
+        elif current_state == "CONFIRM":
+            transcription_lower = transcription.lower()
+            yes_synonyms = ['yes', 'sure', 'okay', 'please', 'ok', 'recommend', 'doctor']
+            logger.debug(f"CONFIRM state: transcription_lower='{transcription_lower}', checking against yes_synonyms={yes_synonyms}")
             if any(x in transcription_lower for x in yes_synonyms):
+                logger.debug("Affirmative response detected, transitioning to COMPLETE")
                 doctors_list, specialty = assign_doctor(medical_data)
                 if not doctors_list:
                     response_text = f"No doctors available for {specialty}. Please try again later."
                     audio_url = synthesize_audio(response_text, language, session_id)
+                    update_conversation_state(session, medical_data, current_state, current_state, asked_questions, current_query, conversation_id)
                     db.collection('conversations').add({
                         'conversation_id': conversation_id,
                         'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
@@ -691,7 +695,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                         'normalized_transcription': normalized_transcription,
                         'state': current_state,
                         'response': response_text,
-                        'symptoms': updated_symptoms,
+                        'symptoms': medical_data["symptoms"],
                         'next_state': current_state,
                         'timestamp': firestore.SERVER_TIMESTAMP,
                         'is_repeat': False,
@@ -752,6 +756,9 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                     if not save_success:
                         response_text += " Note: Data saving issue occurred."
                     audio_url = synthesize_audio(response_text, language, session_id)
+                    next_state = "COMPLETE"
+                    reward = 2
+                    update_conversation_state(session, medical_data, current_state, next_state, asked_questions, current_query, conversation_id)
                     db.collection('conversations').add({
                         'conversation_id': conversation_id,
                         'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
@@ -760,11 +767,11 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                         'normalized_transcription': normalized_transcription,
                         'state': current_state,
                         'response': response_text,
-                        'symptoms': updated_symptoms,
-                        'next_state': "COMPLETE",
+                        'symptoms': medical_data["symptoms"],
+                        'next_state': next_state,
                         'timestamp': firestore.SERVER_TIMESTAMP,
                         'is_repeat': False,
-                        'reward': 2
+                        'reward': reward
                     })
                     return {
                         "success": True,
@@ -774,127 +781,15 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                         "redirect": "/dashboard",
                         "conversationComplete": True
                     }, 200
-
-        medical_data = {
-            "symptoms": updated_symptoms,
-            "severity": updated_severities,
-            "duration": updated_durations,
-            "triggers": updated_triggers
-        }
-
-        for idx, symptom in enumerate(medical_data["symptoms"]):
-            if not symptom: continue
-            if symptom not in asked_questions:
-                asked_questions[symptom] = {"severity": False, "duration": False, "triggers": False}
-            if idx < len(medical_data["severity"]):
-                severity = medical_data["severity"][idx]
-                if severity is not None:
-                    severity = severity.lower()
-                    if severity.isdigit():
-                        num = int(severity)
-                        medical_data["severity"][idx] = "mild" if num <= 3 else "moderate" if num <= 6 else "severe"
-                        severity = medical_data["severity"][idx]
-                    asked_questions[symptom]["severity"] = severity in ["mild", "moderate", "severe"]
-                else:
-                    asked_questions[symptom]["severity"] = False
             else:
-                asked_questions[symptom]["severity"] = False
-            asked_questions[symptom]["duration"] = bool(idx < len(medical_data["duration"]) and medical_data["duration"][idx].strip())
-            asked_questions[symptom]["triggers"] = bool(idx < len(medical_data["triggers"]) and medical_data["triggers"][idx])
-
-        session['asked_questions'] = asked_questions
-        session['medical_data'] = medical_data
-        session['current_state'] = next_state
-
-        all_questions_answered = all(
-            asked_questions[symptom]["severity"] and 
-            asked_questions[symptom]["duration"] and 
-            asked_questions[symptom]["triggers"]
-            for symptom in medical_data["symptoms"] if symptom
-        )
-
-        if not all_questions_answered:
-            for idx, symptom in enumerate(medical_data["symptoms"]):
-                if not symptom: continue
-                if not asked_questions[symptom]["severity"]:
-                    response_text = response_text.replace("{{symptoms}}", symptom)
-                    session['current_query'] = {"symptom": symptom, "field": "severity"}
-                    audio_url = synthesize_audio(response_text, language, session_id)
-                    db.collection('conversations').add({
-                        'conversation_id': conversation_id,
-                        'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
-                        'session_id': session_id,
-                        'transcription': transcription,
-                        'normalized_transcription': normalized_transcription,
-                        'state': current_state,
-                        'response': response_text,
-                        'symptoms': updated_symptoms,
-                        'next_state': next_state,
-                        'timestamp': firestore.SERVER_TIMESTAMP,
-                        'is_repeat': is_repeat,
-                        'reward': reward
-                    })
-                    return {"success": True, "response": response_text, "medical_data": medical_data, "audio_url": audio_url}, 200
-                elif not asked_questions[symptom]["duration"]:
-                    response_text = response_text.replace("{{symptoms}}", symptom)
-                    session['current_query'] = {"symptom": symptom, "field": "duration"}
-                    audio_url = synthesize_audio(response_text, language, session_id)
-                    db.collection('conversations').add({
-                        'conversation_id': conversation_id,
-                        'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
-                        'session_id': session_id,
-                        'transcription': transcription,
-                        'normalized_transcription': normalized_transcription,
-                        'state': current_state,
-                        'response': response_text,
-                        'symptoms': updated_symptoms,
-                        'next_state': next_state,
-                        'timestamp': firestore.SERVER_TIMESTAMP,
-                        'is_repeat': is_repeat,
-                        'reward': reward
-                    })
-                    return {"success": True, "response": response_text, "medical_data": medical_data, "audio_url": audio_url}, 200
-                elif not asked_questions[symptom]["triggers"]:
-                    response_text = response_text.replace("{{symptoms}}", symptom)
-                    session['current_query'] = {"symptom": symptom, "field": "triggers"}
-                    audio_url = synthesize_audio(response_text, language, session_id)
-                    db.collection('conversations').add({
-                        'conversation_id': conversation_id,
-                        'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
-                        'session_id': session_id,
-                        'transcription': transcription,
-                        'normalized_transcription': normalized_transcription,
-                        'state': current_state,
-                        'response': response_text,
-                        'symptoms': updated_symptoms,
-                        'next_state': next_state,
-                        'timestamp': firestore.SERVER_TIMESTAMP,
-                        'is_repeat': is_repeat,
-                        'reward': reward
-                    })
-                    return {"success": True, "response": response_text, "medical_data": medical_data, "audio_url": audio_url}, 200
-
-        if all_questions_answered and current_state not in ["CONFIRM", "COMPLETE"]:
-            response_text = "May I recommend a doctor for you?"
-            session['current_state'] = "CONFIRM"
-            audio_url = synthesize_audio(response_text, language, session_id)
-            db.collection('conversations').add({
-                'conversation_id': conversation_id,
-                'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
-                'session_id': session_id,
-                'transcription': transcription,
-                'normalized_transcription': normalized_transcription,
-                'state': current_state,
-                'response': response_text,
-                'symptoms': updated_symptoms,
-                'next_state': "CONFIRM",
-                'timestamp': firestore.SERVER_TIMESTAMP,
-                'is_repeat': False,
-                'reward': 1
-            })
-            return {"success": True, "response": response_text, "medical_data": medical_data, "audio_url": audio_url}, 200
+                logger.debug("No affirmative response detected, staying in CONFIRM state")
+                response_text = "Please confirm if you'd like me to recommend a doctor. Say 'yes' or 'no'."
+                next_state = "CONFIRM"
+                is_repeat = True
+                reward = 0
 
         audio_url = synthesize_audio(response_text, language, session_id)
+        update_conversation_state(session, medical_data, current_state, next_state, asked_questions, current_query, conversation_id)
         db.collection('conversations').add({
             'conversation_id': conversation_id,
             'uid': hashlib.sha256(request.user.get('uid').encode()).hexdigest(),
@@ -903,7 +798,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
             'normalized_transcription': normalized_transcription,
             'state': current_state,
             'response': response_text,
-            'symptoms': updated_symptoms,
+            'symptoms': extracted_symptoms,
             'next_state': next_state,
             'timestamp': firestore.SERVER_TIMESTAMP,
             'is_repeat': is_repeat,
@@ -934,7 +829,6 @@ def index():
         logger.error(f"index.html not found: {str(e)}")
         return "Homepage not found.", 404
 
-@app.route('/register', methods=['GET', 'POST'])
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     try:
@@ -1037,6 +931,9 @@ def login():
             'full_name': full_name
         }
         session["idToken"] = id_token
+        # Reset conversation state on login to clear stale data
+        reset_conversation_state(session)
+        logger.debug("Conversation state reset after login for user: %s", email)
         return jsonify({"success": True, "redirect": "/dashboard"})
     except Exception as e:
         return jsonify({"error": "Login failed", "details": str(e)}), 500
@@ -1057,7 +954,7 @@ def check_auth():
         return jsonify({"authenticated": True})
     except Exception:
         return jsonify({"authenticated": False}), 401
-    
+
 @app.route('/further_patient_registration', methods=['GET'])
 @token_required
 def further_patient_registration():
@@ -1067,130 +964,14 @@ def further_patient_registration():
         session_info = session.get('user_info', {})
         patient_name = session_info.get('full_name', uid)
 
-        doc_id = f'initial_screening_{uid}'
-        doc_ref = db.collection('initial_screenings').document(doc_id)
-        doc_snap = doc_ref.get()
-        if not doc_snap.exists:
-            medical_data = {
-                'uid': uid,
-                'patient_name': patient_name,
-                'symptoms': '',
-                'severity': '',
-                'duration': '',
-                'triggers': '',
-                'consultant_id': None,
-                'timestamp': firestore.SERVER_TIMESTAMP
-            }
-            doc_ref.set(medical_data)
+        # Reset conversation state on page load/refresh, including Firestore
+        reset_conversation_state(session, clear_firestore=True, uid=uid)
+        logger.debug("Conversation state reset in further_patient_registration for user: %s", uid)
 
         return render_template('further_patient_registration.html', user_info={'uid': uid, 'patient_name': patient_name})
     except Exception as e:
         return jsonify({"error": "Error loading further patient registration", "details": str(e)}), 500
 
-def synthesize_audio(text, language="en", session_id=None):
-    try:
-        logger.debug(f"Synthesizing audio: {text[:50]}... (language: {language})")
-        if not text or not text.strip():
-            logger.warning("TTS input is empty")
-            return None
-
-        # Generate cache key
-        cache_key = hashlib.md5((text + language).encode()).hexdigest()
-        doc_ref = db.collection('tts_cache').document(cache_key)
-        
-        # Check Firestore cache (synchronous)
-        logger.debug("Checking Firestore cache for cache_key: %s", cache_key)
-        doc = doc_ref.get()
-        if doc.exists:
-            cached = doc.to_dict()
-            gcs_url = cached.get('gcs_url')
-            logger.info(f"Retrieved cached TTS for: {text[:50]}")
-            return gcs_url
-
-        # Generate TTS
-        logger.debug("Generating TTS audio")
-        tts = gTTS(text=text, lang=language, slow=False)
-        temp_file = os.path.join(tempfile.gettempdir(), f"temp_tts_{cache_key}.mp3")
-        tts.save(temp_file)
-        audio_size = os.path.getsize(temp_file)
-        if audio_size < 1024:
-            logger.error(f"Generated audio {temp_file} too small: {audio_size} bytes")
-            os.remove(temp_file)
-            raise ValueError(f"Generated audio file is too small: {audio_size} bytes")
-
-        # Upload to GCS (bucket is publicly readable via IAM)
-        logger.debug("Uploading audio to GCS")
-        gcs_path = f"tts/{cache_key}.mp3"
-        blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(temp_file)
-        logger.debug("Audio uploaded to GCS at path: %s", gcs_path)
-        
-        # Construct public URL manually without accessing metadata
-        gcs_url = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
-        logger.debug("Constructed public URL: %s", gcs_url)
-        
-        os.remove(temp_file)
-
-        # Cache metadata in Firestore (synchronous)
-        logger.debug("Caching URL in Firestore")
-        doc_ref.set({
-            'text': text,
-            'language': language,
-            'gcs_url': gcs_url,
-            'timestamp': firestore.SERVER_TIMESTAMP
-        })
-        logger.info(f"Uploaded TTS to GCS and cached in Firestore: {gcs_url}")
-        return gcs_url
-    except Exception as e:
-        logger.error(f"Audio synthesis error: {str(e)}")
-        if 'temp_file' in locals() and os.path.exists(temp_file):
-            os.remove(temp_file)
-        return None
-    
-@app.route('/regenerate-audio', methods=['POST'])
-@token_required
-def regenerate_audio():
-    try:
-        data = request.get_json()
-        cache_key = data.get('cacheKey')
-        if not cache_key:
-            return jsonify({"error": "Missing cacheKey"}), 400
-
-        # Retrieve the cached entry
-        doc_ref = db.collection('tts_cache').document(cache_key)
-        doc = doc_ref.get()
-        if not doc.exists:
-            return jsonify({"error": "Cache entry not found"}), 404
-
-        cached = doc.to_dict()
-        text = cached.get('text')
-        language = cached.get('language', 'en')
-
-        if not text:
-            return jsonify({"error": "Text not found in cache entry"}), 400
-
-        # Delete the old cache entry and GCS file
-        logger.debug("Deleting old audio file from GCS for cache_key: %s", cache_key)
-        blob = bucket.blob(f"tts/{cache_key}.mp3")
-        try:
-            blob.delete()
-            logger.info(f"Deleted old audio file: tts/{cache_key}.mp3")
-        except Exception as e:
-            logger.warning(f"Failed to delete old audio file: {str(e)}")
-        doc_ref.delete()
-        logger.debug("Deleted old cache entry from Firestore")
-
-        # Re-generate the audio
-        logger.debug("Re-generating audio for cache_key: %s", cache_key)
-        gcs_url = synthesize_audio(text, language)
-        if not gcs_url:
-            return jsonify({"error": "Failed to re-generate audio"}), 500
-
-        return jsonify({"success": True, "audio_url": gcs_url})
-    except Exception as e:
-        logger.error(f"Error re-generating audio: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-    
 @app.route('/transcribe', methods=['POST'])
 @token_required
 def transcribe():
@@ -1247,36 +1028,37 @@ def start_conversation():
         medical_data = data.get('medicalData', {})
         current_state = data.get('currentState', 'INITIAL')
 
+        # Reset session for new session_id to avoid stale data
+        if 'last_session_id' not in session or session['last_session_id'] != session_id:
+            reset_conversation_state(session, clear_firestore=True, uid=uid)
+            session['last_session_id'] = session_id
+            logger.debug("New session started with session_id: %s", session_id)
+            current_state = "INITIAL"  # Force INITIAL state for new session
+
         if not session_id:
             logger.error("Missing sessionId")
             return jsonify({"error": "Missing sessionId"}), 400
 
-        if not transcript:
-            logger.error("No transcript provided")
-            return jsonify({"error": "No transcript provided"}), 400
-
-        logger.debug(f"Received transcript: '{transcript}'")
+        logger.debug(f"Received start_conversation payload: {data}, using session state: {current_state}")
 
         # Proceed with conversation
         history = session.get('conversation_history', '')
         processed_data, status_code = process_conversation(
-            transcript=transcript, history=history, session_id=session_id
+            transcript=transcript, history=history, session_id=session_id, current_state=current_state
         )
         if status_code != 200:
             logger.error(f"Conversation processing failed: {processed_data}")
             return jsonify(processed_data), status_code
 
-        # Update session
+        # Update session history
         session['conversation_history'] = f"{history}\nPatient: {transcript}\nAgent: {processed_data['response']}"
-        session['medical_data'] = processed_data.get('medical_data', {"symptoms": []})
-        session['current_state'] = processed_data.get('next_state', current_state)
 
         return jsonify({
             "success": True,
             "response": processed_data['response'],
             "medical_data": processed_data.get('medical_data', {"symptoms": []}),
             "audio_url": processed_data.get('audio_url'),
-            "nextState": processed_data.get('next_state', current_state)
+            "nextState": session.get('current_state', 'INITIAL')
         })
 
     except Exception as e:
@@ -1379,7 +1161,7 @@ def upload_image():
     except Exception as e:
         logger.exception(f"Upload error: {e}")
         return jsonify({"error": str(e)}), 500
-    
+
 @app.route('/process-upload', methods=['POST'])
 def process_upload():
     try:
@@ -1522,6 +1304,20 @@ def logout():
 @app.errorhandler(404)
 def page_not_found(e):
     return render_template('errors/404.html', error_poem="Blank space resonates\n404 hums creation\nNew worlds now beckon"), 404
+
+@app.route('/debug_static', methods=['GET'])
+def debug_static():
+    """
+    Debug route to list files in the static directory.
+    """
+    try:
+        static_dir = os.path.join(app.root_path, 'static')
+        files = os.listdir(static_dir)
+        logger.debug(f"Static directory contents: {files}")
+        return jsonify({"static_files": files})
+    except Exception as e:
+        logger.error(f"Error listing static files: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     import hypercorn.asyncio

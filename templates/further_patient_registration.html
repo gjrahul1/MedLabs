@@ -3,19 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Patient Registration</title>
+  <title>AI Receptionist</title>
   <link rel="stylesheet" href="/static/styles/voice_bot.css">
- <!-- Load Firebase SDK (Compat Version) -->
-<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-storage-compat.js"></script>
-
-<!-- Load firebaseConfig.js to initialize Firebase -->
-<script src="/static/scripts/firebaseConfig.js"></script>
-
-<!-- Load voice_bot.js after Firebase is initialized -->
-<script src="/static/scripts/voice_bot.js"></script>
 </head>
 <body>
   <div class="container">
@@ -25,15 +14,32 @@
       <h3>Conversation</h3>
       <div id="transcriptContent" class="transcript-content"></div>
     </div>
-    <button id="controlButton" class="control-button" disabled>Start Recording</button>
+    <button id="controlButton" class="control-button start" disabled>Start Recording</button>
+    <button id="stopButton" class="control-button stop">Stop Recording</button>
     <audio id="audioPlayer" style="display: none;"></audio>
+    <div id="fallback" style="color: red; display: none;">
+      Error: JavaScript failed to load. Please check the console and ensure all scripts are accessible.
+    </div>
   </div>
+
+  <!-- Firebase Compat SDK -->
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.3.1/firebase-storage-compat.js"></script>
+  <!-- Firebase Config -->
+  <script src="/static/scripts/firebaseConfig.js"></script>
+  <!-- Voice Bot Script -->
+  <script src="/static/scripts/voice_bot.js" onerror="document.getElementById('fallback').style.display = 'block'; console.error('Failed to load voice_bot.js');"></script>
+  <!-- Fallback and appData -->
   <script>
-    window.appData = {
-      uid: "{{ user_info.uid }}",
-      patientName: "{{ user_info.patient_name }}"
-    };
+    window.appData = window.appData || { uid: null };
+    setTimeout(() => {
+      if (!window.voiceBotInitialized) {
+        document.getElementById('fallback').style.display = 'block';
+        console.error('voice_bot.js not initialized after 5 seconds. Check /static/scripts/voice_bot.js exists and is accessible.');
+      }
+    }, 5000);
   </script>
-  <script src="/static/scripts/voice_bot.js"></script>
-</body>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'93befaea4935ed84',t:'MTc0NjYwMjY5Mi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
