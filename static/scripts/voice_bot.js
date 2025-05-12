@@ -2,6 +2,7 @@ console.log("voice_bot.js loaded:", new Date().toISOString());
 
 let recognition = null;
 let isRecording = false;
+let userStopped = false; // Flag to track if user manually stopped recording
 let audioQueue = [];
 let responseQueue = [];
 let isPlaying = false;
@@ -10,7 +11,6 @@ let transcriptContentElement = null;
 let transcriptPanel = null;
 let controlButton = null;
 let isProcessing = false;
-let recognitionTimeout = null;
 
 window.appData = {
     sessionId: null,
@@ -35,7 +35,6 @@ function generateSessionId() {
 function initializeVoiceBot() {
     console.log("Voice bot initializing:", new Date().toISOString());
 
-    // Generate a new sessionId on initialization
     window.appData.sessionId = generateSessionId();
     console.log("Generated new sessionId:", window.appData.sessionId);
 
@@ -55,13 +54,13 @@ function initializeVoiceBot() {
     }
     if (!controlButton) {
         console.error("Control button not found. Ensure <button id='controlButton'> exists in the HTML.");
-    } else {
-        controlButton.disabled = false;
-        controlButton.textContent = "Start Recording";
-        controlButton.classList.remove('stop'); // Ensure stop class is removed
-        controlButton.classList.add('start'); // Ensure start class is added
-        console.log("Control button initialized: text='Start Recording', class='start'");
+        return;
     }
+
+    // Ensure button is enabled
+    controlButton.disabled = false;
+    updateButtonStates();
+    console.log("Control button initialized: text='Start Recording', class='start'");
 
     updateStatus("Ready");
 
@@ -78,7 +77,6 @@ function updateStatus(status) {
         statusElement.textContent = `Status: ${status}`;
     }
     console.log("Status:", status);
-    // Update transcript panel class for recording animation
     if (transcriptPanel) {
         if (status === "Recording...") {
             transcriptPanel.classList.add('recording');
@@ -129,6 +127,18 @@ async function checkMicPermission() {
     }
 }
 
+// Update button states
+function updateButtonStates() {
+    if (controlButton) {
+        controlButton.textContent = isRecording ? "Stop Recording" : "Start Recording";
+        controlButton.classList.remove('start', 'stop');
+        controlButton.classList.add(isRecording ? 'stop' : 'start');
+        // Ensure button is always enabled
+        controlButton.disabled = false;
+        console.log(`Control button updated: text='${controlButton.textContent}', disabled=${controlButton.disabled}, class='${controlButton.className}'`);
+    }
+}
+
 // Setup speech recognition
 function setupSpeechRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -146,22 +156,11 @@ function setupSpeechRecognition() {
     recognition.onstart = () => {
         isRecording = true;
         updateStatus("Recording...");
-        if (controlButton) {
-            controlButton.textContent = "Stop Recording";
-            controlButton.classList.remove('start');
-            controlButton.classList.add('stop');
-            console.log("Recording started: controlButton text='Stop Recording', class='stop'");
-        }
-        recognitionTimeout = setTimeout(() => {
-            if (isRecording) {
-                console.log("No speech detected after 10 seconds, stopping recognition...");
-                stopRecognition();
-            }
-        }, 10000);
+        updateButtonStates();
+        console.log("Recording started: controlButton text='Stop Recording', class='stop'");
     };
 
     recognition.onresult = (event) => {
-        clearTimeout(recognitionTimeout);
         const transcript = event.results[0][0].transcript.trim();
         console.log("Speech recognized:", transcript);
         window.appData.transcript = transcript;
@@ -172,22 +171,18 @@ function setupSpeechRecognition() {
     };
 
     recognition.onend = () => {
-        clearTimeout(recognitionTimeout);
         isRecording = false;
         updateStatus("Ready");
-        if (controlButton) {
-            controlButton.textContent = "Start Recording";
-            controlButton.classList.remove('stop');
-            controlButton.classList.add('start');
-            console.log("Recording ended: controlButton text='Start Recording', class='start'");
-        }
+        updateButtonStates();
+        console.log("Recording ended: controlButton text='Start Recording', class='start'");
         if (!isPlaying && !isProcessing && audioQueue.length > 0) {
             playNextAudio();
+        } else if (!isPlaying && !isProcessing && !userStopped) {
+            startRecognition(); // Restart only if not manually stopped
         }
     };
 
     recognition.onerror = (event) => {
-        clearTimeout(recognitionTimeout);
         console.error("Recognition error:", event.error);
         updateStatus(`Speech recognition error: ${event.error}`);
         if (event.error === 'no-speech') {
@@ -197,16 +192,34 @@ function setupSpeechRecognition() {
             updateStatus("Microphone access denied. Please allow microphone access to proceed.");
         }
         isRecording = false;
-        if (controlButton) {
-            controlButton.textContent = "Start Recording";
-            controlButton.classList.remove('stop');
-            controlButton.classList.add('start');
-            console.log("Recording error: controlButton text='Start Recording', class='start'");
-        }
+        updateButtonStates();
+        console.log("Recording error: controlButton text='Start Recording', class='start'");
         if (!isPlaying && !isProcessing && audioQueue.length > 0) {
             playNextAudio();
+        } else if (!isPlaying && !isProcessing && !userStopped) {
+            startRecognition(); // Restart only if not manually stopped
         }
     };
+}
+
+// Start recognition
+function startRecognition() {
+    if (recognition && !isRecording) {
+        userStopped = false; // Reset flag when user starts recording
+        recognition.start();
+    }
+}
+
+// Stop speech recognition
+function stopRecognition() {
+    if (recognition && isRecording) {
+        userStopped = true; // Set flag when user manually stops
+        recognition.stop();
+        isRecording = false;
+        updateStatus("Ready");
+        updateButtonStates();
+        console.log("Speech recognition stopped manually.");
+    }
 }
 
 // Start conversation with the server
@@ -252,7 +265,7 @@ async function startConversation(transcript = "") {
 
         if (responseData.audio_url) {
             audioQueue.push(responseData.audio_url);
-            if (!isPlaying && !isRecording) {
+            if (!isPlaying && !isRecording && !userStopped) {
                 playNextAudio();
             }
         }
@@ -318,8 +331,8 @@ function loadVoices() {
 async function playNextAudio() {
     if (audioQueue.length === 0 || responseQueue.length === 0) {
         isPlaying = false;
-        if (!isRecording && !isProcessing) {
-            recognition.start();
+        if (!isRecording && !isProcessing && !userStopped) {
+            startRecognition();
         }
         return;
     }
@@ -367,17 +380,6 @@ async function playNextAudio() {
     }
 }
 
-// Stop speech recognition
-function stopRecognition() {
-    if (recognition && isRecording) {
-        recognition.stop();
-        isRecording = false;
-        updateStatus("Ready");
-        console.log("Speech recognition stopped manually.");
-        clearTimeout(recognitionTimeout);
-    }
-}
-
 // Firebase authentication state change handler
 firebase.auth().onAuthStateChanged(user => {
     if (user) {
@@ -394,17 +396,28 @@ firebase.auth().onAuthStateChanged(user => {
     }
 });
 
-// Add event listener for stop button
+// Add event listeners
 document.addEventListener('DOMContentLoaded', () => {
-    const stopButton = document.getElementById('stopButton');
-    if (stopButton) {
-        stopButton.addEventListener('click', stopRecognition);
+    controlButton = document.getElementById('controlButton');
+    if (controlButton) {
+        // Remove any existing listeners to prevent duplicates
+        controlButton.removeEventListener('click', toggleRecording);
+        controlButton.addEventListener('click', toggleRecording);
     }
 
-    // Check microphone permissions on load
     checkMicPermission().then(hasPermission => {
         if (hasPermission && !isRecording && !isPlaying && !isProcessing) {
-            recognition.start();
+            // Do not start recording automatically on page load
+            console.log("Waiting for user to start recording");
         }
     });
 });
+
+// Toggle recording function for clarity
+function toggleRecording() {
+    if (isRecording) {
+        stopRecognition();
+    } else {
+        startRecognition();
+    }
+}
