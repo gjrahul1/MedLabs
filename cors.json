@@ -1,8 +1,8 @@
 [
-  {
-    "origin": ["http://127.0.0.1:500", "http://localhost", "https://med-labs-42f13"],
-    "method": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    "header": ["Content-Type", "Authorization"],
-    "maxAgeSeconds": 3600
-  }
+    {
+        "origin": ["http://127.0.0.1:5000"],
+        "method": ["GET", "HEAD"],
+        "responseHeader": ["Content-Type", "Access-Control-Allow-Origin"],
+        "maxAgeSeconds": 3600
+    }
 ]

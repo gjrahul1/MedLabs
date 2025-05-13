@@ -332,16 +332,21 @@ def cleanup_old_tts_files(static_dir="static", max_age=3600):
     except Exception as e:
         logger.warning(f"Failed to clean up old TTS files: {str(e)}")
 
-def transcribe_audio(audio_path, language="en", retries=3):
+def transcribe_audio(audio_path, language="en", retries=5):
+    """
+    Transcribe audio using Whisper with retries and validation.
+    Returns the transcribed text or an error message.
+    """
     attempt = 0
     while attempt < retries:
         try:
-            logger.debug(f"Transcribing audio: {audio_path} (language: {language}, attempt: {attempt + 1})")
+            logger.debug(f"Transcribing audio: {audio_path} (language: {language}, attempt: {attempt + 1}/{retries})")
             audio_size = os.path.getsize(audio_path)
             logger.debug(f"Audio file size: {audio_size} bytes")
             if audio_size < 1024:
                 logger.error(f"Audio file too small: {audio_size} bytes")
                 return "Audio file too small or corrupted"
+
             with open(audio_path, "rb") as audio_file:
                 result = client.audio.transcriptions.create(
                     model="whisper-1",
@@ -349,7 +354,10 @@ def transcribe_audio(audio_path, language="en", retries=3):
                     language=language,
                     response_format="text"
                 )
-                transcribed_text = result.text
+                transcribed_text = result.strip() if result else ""
+                if not transcribed_text or transcribed_text.lower() == "you":  # Fallback for unmeaningful transcription
+                    logger.warning(f"Transcription result '{transcribed_text}' is unmeaningful, retrying...")
+                    raise ValueError("Unmeaningful transcription received")
                 logger.debug(f"Transcribed text: {transcribed_text}")
                 return transcribed_text
         except httpx.HTTPStatusError as e:
@@ -365,68 +373,98 @@ def transcribe_audio(audio_path, language="en", retries=3):
             if attempt < retries:
                 time.sleep(2 ** attempt)
             else:
-                return f"Transcription failed: {str(e)}"
+                logger.error("All retries failed for transcription")
+                return "Transcription failed after multiple attempts"
     return "Transcription failed after multiple attempts"
 
-def synthesize_audio(text, language="en", session_id=None):
-    try:
-        logger.debug(f"Synthesizing audio: {text[:50]}... (language: {language})")
-        if not text or not text.strip():
-            logger.warning("TTS input is empty")
-            return None
+def synthesize_audio(text, language="en", session_id=None, retries=3):
+    """
+    Synthesize audio from text using gTTS and upload to GCS.
+    Returns the public URL of the audio file or None if synthesis fails.
+    """
+    attempt = 0
+    temp_file = None
+    while attempt < retries:
+        try:
+            logger.debug(f"Synthesizing audio (attempt {attempt + 1}/{retries}): {text[:50]}... (language: {language})")
+            if not text or not text.strip():
+                logger.warning("TTS input is empty")
+                return None
 
-        # Generate cache key
-        cache_key = hashlib.md5((text + language).encode()).hexdigest()
-        doc_ref = db.collection('tts_cache').document(cache_key)
-        
-        # Check Firestore cache (synchronous)
-        logger.debug("Checking Firestore cache for cache_key: %s", cache_key)
-        doc = doc_ref.get()
-        if doc.exists:
-            cached = doc.to_dict()
-            gcs_url = cached.get('gcs_url')
-            logger.info(f"Retrieved cached TTS for: {text[:50]}")
+            # Generate cache key
+            cache_key = hashlib.md5((text + language).encode()).hexdigest()
+            doc_ref = db.collection('tts_cache').document(cache_key)
+            
+            # Check Firestore cache
+            logger.debug("Checking Firestore cache for cache_key: %s", cache_key)
+            doc = doc_ref.get()
+            if doc.exists:
+                cached = doc.to_dict()
+                gcs_url = cached.get('gcs_url')
+                # Validate cached URL
+                try:
+                    response = httpx.head(gcs_url, timeout=5)
+                    if response.status_code == 200:
+                        logger.info(f"Retrieved cached TTS for: {text[:50]} - URL: {gcs_url}")
+                        return gcs_url
+                    else:
+                        logger.warning(f"Cached audio URL inaccessible (status {response.status_code}): {gcs_url}")
+                        doc_ref.delete()
+                        logger.debug("Deleted invalid cache entry")
+                except Exception as e:
+                    logger.warning(f"Error validating cached audio URL {gcs_url}: {str(e)}")
+                    doc_ref.delete()
+                    logger.debug("Deleted invalid cache entry")
+
+            # Generate TTS
+            logger.debug("Generating TTS audio")
+            tts = gTTS(text=text, lang=language, slow=False)
+            temp_file = os.path.join(tempfile.gettempdir(), f"temp_tts_{cache_key}.mp3")
+            tts.save(temp_file)
+            
+            audio_size = os.path.getsize(temp_file)
+            if audio_size < 1024:
+                logger.error(f"Generated audio {temp_file} too small: {audio_size} bytes")
+                raise ValueError(f"Generated audio file is too small: {audio_size} bytes")
+
+            # Upload to GCS
+            logger.debug("Uploading audio to GCS")
+            gcs_path = f"tts/{cache_key}.mp3"
+            blob = bucket.blob(gcs_path)
+            blob.upload_from_filename(temp_file)
+            logger.debug("Audio uploaded to GCS at path: %s", gcs_path)
+            
+            # Construct public URL
+            gcs_url = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
+            logger.debug(f"Constructed public URL: {gcs_url}")
+            
+            # Cache metadata in Firestore
+            logger.debug("Caching URL in Firestore")
+            doc_ref.set({
+                'text': text,
+                'language': language,
+                'gcs_url': gcs_url,
+                'timestamp': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Uploaded TTS to GCS and cached in Firestore: {gcs_url}")
             return gcs_url
 
-        # Generate TTS
-        logger.debug("Generating TTS audio")
-        tts = gTTS(text=text, lang=language, slow=False)
-        temp_file = os.path.join(tempfile.gettempdir(), f"temp_tts_{cache_key}.mp3")
-        tts.save(temp_file)
-        audio_size = os.path.getsize(temp_file)
-        if audio_size < 1024:
-            logger.error(f"Generated audio {temp_file} too small: {audio_size} bytes")
-            os.remove(temp_file)
-            raise ValueError(f"Generated audio file is too small: {audio_size} bytes")
-
-        # Upload to GCS (bucket is publicly readable via IAM)
-        logger.debug("Uploading audio to GCS")
-        gcs_path = f"tts/{cache_key}.mp3"
-        blob = bucket.blob(gcs_path)
-        blob.upload_from_filename(temp_file)
-        logger.debug("Audio uploaded to GCS at path: %s", gcs_path)
-        
-        # Construct public URL manually without accessing metadata
-        gcs_url = f"https://storage.googleapis.com/{bucket.name}/{gcs_path}"
-        logger.debug(f"Constructed public URL: {gcs_url}")
-        
-        os.remove(temp_file)
-
-        # Cache metadata in Firestore (synchronous)
-        logger.debug("Caching URL in Firestore")
-        doc_ref.set({
-            'text': text,
-            'language': language,
-            'gcs_url': gcs_url,
-            'timestamp': firestore.SERVER_TIMESTAMP
-        })
-        logger.info(f"Uploaded TTS to GCS and cached in Firestore: {gcs_url}")
-        return gcs_url
-    except Exception as e:
-        logger.error(f"Audio synthesis error: {str(e)}")
-        if 'temp_file' in locals() and os.path.exists(temp_file):
-            os.remove(temp_file)
-        return None
+        except Exception as e:
+            logger.error(f"Audio synthesis error (attempt {attempt + 1}/{retries}): {str(e)}")
+            attempt += 1
+            if attempt < retries:
+                logger.debug("Retrying audio synthesis...")
+                time.sleep(2 ** attempt)
+            else:
+                logger.error("All retries failed for audio synthesis")
+                return None
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                    logger.debug(f"Cleaned up temporary file: {temp_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp file {temp_file}: {str(e)}")
 
 def reset_conversation_state(session, clear_firestore=False, uid=None):
     """
@@ -601,32 +639,54 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
 
         elif current_state == "SEVERITY":
             transcription_lower = transcription.lower()
-            severity = "moderate"  # Default severity
-            if "mild" in transcription_lower:
-                severity = "mild"
-            elif "moderate" in transcription_lower:
-                severity = "moderate"
-            elif "severe" in transcription_lower:
-                severity = "severe"
-            else:
-                num_match = re.search(r'\b([1-9]|10)\b', transcription_lower)
-                if num_match:
-                    num = int(num_match.group(1))
-                    severity = "mild" if num <= 3 else "moderate" if num <= 6 else "severe"
-                    current_query["raw_severity"] = num_match.group(1)
-                    current_query["interpreted_severity"] = severity
-                    response_text = f"You said your {', '.join(medical_data['symptoms'])} severity is {severity}. Is that correct?"
-                    next_state = "CONFIRM_SEVERITY"
+            # Split the input into parts based on symptom mentions
+            severities = []
+            # Look for severity keywords in the context of each symptom
+            symptom_indices = {symptom: transcription_lower.find(symptom) for symptom in medical_data["symptoms"]}
+            sorted_symptoms = sorted(symptom_indices.items(), key=lambda x: x[1])  # Sort by position in text
+            input_parts = transcription_lower.split("and")
+
+            for i, (symptom, _) in enumerate(sorted_symptoms):
+                part = input_parts[i].strip() if i < len(input_parts) else transcription_lower
+                severity = "moderate"  # Default severity
+                if "mild" in part:
+                    severity = "mild"
+                elif "moderate" in part:
+                    severity = "moderate"
+                elif "severe" in part:
+                    severity = "severe"
                 else:
-                    response_text = "Please specify the severity: mild, moderate, or severe."
+                    num_match = re.search(r'\b([1-9]|10)\b', part)
+                    if num_match:
+                        num = int(num_match.group(1))
+                        severity = "mild" if num <= 3 else "moderate" if num <= 6 else "severe"
+                        severities.append(severity)
+                        current_query["raw_severity"] = num_match.group(1)
+                        current_query["interpreted_severity"] = severity
+                        current_query["symptom"] = symptom
+                        response_text = f"You said your {', '.join(medical_data['symptoms'])} severity is {', '.join(severities)}. Is that correct?"
+                        next_state = "CONFIRM_SEVERITY"
+                        continue
+                severities.append(severity)
+
+            if next_state != "CONFIRM_SEVERITY":
+                if len(severities) == len(medical_data["symptoms"]):
+                    # Assign severities in order of symptoms
+                    medical_data["severity"] = severities
+                    logger.debug(f"Assigned severities {severities} to symptoms {medical_data['symptoms']}")
+                    response_text = f"How long have you been experiencing {', '.join(medical_data['symptoms'])}?"
+                    next_state = "DURATION"
+                    reward = 1
+                else:
+                    # If severities don't match symptoms, use the first severity for all
+                    first_severity = severities[0] if severities else "moderate"
+                    medical_data["severity"] = [first_severity] * len(medical_data["symptoms"])
+                    logger.warning(f"Number of severities ({len(severities)}) does not match number of symptoms ({len(medical_data['symptoms'])}). Using first severity '{first_severity}' for all symptoms")
+                    response_text = "Please specify the severity for each symptom: mild, moderate, or severe."
                     next_state = "SEVERITY"
                     is_repeat = True
                     reward = -1
-            if not is_repeat:
-                medical_data["severity"] = [severity] * len(medical_data["symptoms"])
-                response_text = f"How long have you been experiencing {', '.join(medical_data['symptoms'])}?"
-                next_state = "DURATION"
-                reward = 1
+
             for symptom in medical_data["symptoms"]:
                 if symptom not in asked_questions:
                     asked_questions[symptom] = {"severity": False, "duration": False, "triggers": False}
@@ -657,9 +717,24 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
 
         elif current_state == "DURATION":
             transcription_lower = transcription.lower()
-            duration_match = re.search(r'(\d+\s*(to\s*\d+\s*)?(month|week|day))', transcription_lower)
-            duration = duration_match.group(0) if duration_match else "unknown"
-            medical_data["duration"] = [duration] * len(medical_data["symptoms"])
+            # Extract all duration patterns using re.findall
+            duration_matches = re.findall(r'(\d+\s*(to\s*\d+\s*)?(month|week|day))', transcription_lower)
+            # Extract the full duration strings (e.g., "2 weeks", "5 weeks")
+            durations = [match[0] for match in duration_matches] if duration_matches else ["unknown"]
+            
+            if not durations or durations[0] == "unknown":
+                # If no durations found, default to "unknown" for all symptoms
+                medical_data["duration"] = ["unknown"] * len(medical_data["symptoms"])
+                logger.debug("No durations found in input, defaulting to 'unknown' for all symptoms")
+            elif len(durations) == len(medical_data["symptoms"]):
+                # If the number of durations matches the number of symptoms, assign them in order
+                medical_data["duration"] = durations
+                logger.debug(f"Assigned durations {durations} to symptoms {medical_data['symptoms']}")
+            else:
+                # If the number of durations doesn't match, apply the first duration to all symptoms
+                medical_data["duration"] = [durations[0]] * len(medical_data["symptoms"])
+                logger.warning(f"Number of durations ({len(durations)}) does not match number of symptoms ({len(medical_data['symptoms'])}). Using first duration '{durations[0]}' for all symptoms")
+
             response_text = f"What triggers your {', '.join(medical_data['symptoms'])}, if anything? Say 'unknown' if unsure."
             next_state = "TRIGGERS"
             reward = 1
@@ -778,7 +853,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
                         "response": response_text,
                         "medical_data": medical_data,
                         "audio_url": audio_url,
-                        "redirect": "/dashboard",
+                        "redirect": "http://127.0.0.1:5000/dashboard",
                         "conversationComplete": True
                     }, 200
             else:
@@ -816,7 +891,7 @@ def process_conversation(audio_path=None, transcript=None, history="", session_i
             "redirect": None,
             "conversationComplete": False
         }, 500
-
+    
 @app.before_request
 def before_request_cleanup():
     cleanup_old_tts_files()
