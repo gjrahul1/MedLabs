@@ -3,7 +3,7 @@
   <img src="https://th.bing.com/th/id/R.47e8daaa41ec963d5cbfd458f37045d1?rik=kkJARg5sDo9zew&riu=http%3a%2f%2fairo.co.in%2fimages%2flogo.png&ehk=bR%2fdGNcUnfVIZUKhfrdJyv2b9ribA4RSeDSehAtGE%2fM%3d&risl=&pid=ImgRaw&r=0" alt="Airo Journal" height="90">
 </div>
 
-<h1 align="center">🧬 MedLabs: AI-Powered Smart Medical Assistant</h1>
+<h2 align="center">🧬 MedLabs: An AI-Powered System for Smart Medical Triage and Record Summarization</h2>
 
 ## About the Project
 
