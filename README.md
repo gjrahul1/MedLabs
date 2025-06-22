@@ -10,8 +10,10 @@
 **MedLabs** is an advanced AI-powered medical diagnostics assistant that integrates speech-to-text, medical reasoning, and Firebase-backed health data pipelines. It helps patients input symptoms via voice, dynamically maps them to medical specialties, and routes them to the appropriate consultant. It is voice-enabled, cross-lingual (supports Tamil, Kannada), and integrates OpenAI's LLMs and Google's Gemini for intelligent summarization of prescriptions and lab records.
 
 🔬 This work is also:
-- 📌 [Published as a preprint on OSF](https://osf.io/preprints/osf/t7sbp_v1)
-- 📜 [Accepted in Airo International Journal](https://www.airo.co.in/view-publication/2440)
+- [Published as a preprint on OSF](https://osf.io/preprints/osf/t7sbp_v1)
+- [Accepted in Airo International Journal](https://www.airo.co.in/view-publication/2440)
+- [Published Paper in Airo International Journal](https://drive.google.com/file/d/1Lftt_PuVVfSphpoOstpipbw3xMfNC2rq/view?usp=sharing)
+- [Conference Proceeding Book](https://drive.google.com/file/d/1okVGr3w6MSqQ46iYY6DFEY8hmfdNzbIT/view?usp=sharing)
 
 ---
 
