@@ -14,7 +14,7 @@ openai==1.44.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 requests>=2.27,<3.0.0  
-werkzeug>=2.3.9,<2.4.0
+werkzeug>=3.0.6
 watchdog==3.0.0
 langchain-openai
 func_timeout
